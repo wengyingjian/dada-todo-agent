@@ -137,6 +137,23 @@ Local debugging: symlink your test vault's plugin folder to the build output (fo
 ln -s "$(pwd)/dada-todo-list" "your-vault/.obsidian/plugins/dada-todo-list"
 ```
 
+### 🤖 For AI agents (CLI + skill)
+
+The repo ships a command-line entry (`tools/dada.mjs`) and a matching skill (`skills/task-data-todo/`) so agents can
+create tasks with the plugin's own semantics (inbox / checklists / `###` groups / inline dates) without hand-writing
+Markdown or reading the plugin source. The CLI does not duplicate the format: it bundles the real `api/tasks.js`
+(via esbuild, with `obsidian` replaced by a filesystem mock), so output matches creating a task inside the plugin.
+
+```bash
+node tools/dada.mjs install     # one-time: installs `dada` (default ~/.local/bin) and the skill into existing agent skill dirs
+dada add "Draft Q4 budget" --due tomorrow --json
+dada lists --json               # checklist names / keys / open counts
+dada groups --list "Checklist"  # ### groups in that checklist
+```
+
+The vault is resolved from `--vault` → `DADA_VAULT` → the vault currently open in Obsidian; `--dry-run` writes nothing;
+`--json` gives agents a stable result to assert on. Needs Node 18+ and one `npm install` (only for the esbuild bundled with vite).
+
 ## 📄 License
 
 MIT
