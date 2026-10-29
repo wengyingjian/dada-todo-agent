@@ -168,7 +168,7 @@ ln -s "$(pwd)/dada-todo-list" "你的库/.obsidian/plugins/dada-todo-list"
 
 ### 🤖 给 AI agent 用（CLI + skill）
 
-仓库自带命令行入口 `tools/task.mjs` 和配套技能 `skills/task-data-todo/`，让 agent 用插件自己的语义**读写**任务，
+仓库自带命令行入口 `tools/task.mjs` 和配套技能 `skills/task-dada-todo/`，让 agent 用插件自己的语义**读写**任务，
 不用手拼 Markdown，也不用读插件源码。CLI 不复制格式：它用 esbuild 把真实的 `api/tasks.js` 打包
 （`obsidian` 换成文件系统 mock），所以写出来的东西与插件内操作完全一致。
 

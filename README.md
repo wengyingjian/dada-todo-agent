@@ -139,7 +139,7 @@ ln -s "$(pwd)/dada-todo-list" "your-vault/.obsidian/plugins/dada-todo-list"
 
 ### 🤖 For AI agents (CLI + skill)
 
-The repo ships a command-line entry (`tools/task.mjs`) and a matching skill (`skills/task-data-todo/`) so agents can
+The repo ships a command-line entry (`tools/task.mjs`) and a matching skill (`skills/task-dada-todo/`) so agents can
 **read and write** tasks with the plugin's own semantics — no hand-written Markdown, no need to read the plugin source.
 The CLI does not duplicate the format: it bundles the real `api/tasks.js` (via esbuild, with `obsidian` replaced by a
 filesystem mock), so results match operating inside the plugin.

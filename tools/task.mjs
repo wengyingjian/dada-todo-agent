@@ -11,7 +11,7 @@
 //   - 插件 id 取自仓库根 manifest.json
 //   - Obsidian 库按 --vault / TASK_VAULT / Obsidian 自己的库注册表 自动发现
 //
-// 用法见 `task --help`；给 agent 的语义说明在 skills/task-data-todo/SKILL.md。
+// 用法见 `task --help`；给 agent 的语义说明在 skills/task-dada-todo/SKILL.md。
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -24,8 +24,8 @@ const REPO = path.resolve(path.dirname(SELF), '..');
 const MOCK = path.join(REPO, 'tools', 'obsidian-mock.mjs');
 const ENTRY = path.join(REPO, 'tools', 'core-entry.mjs');
 const DIST = path.join(REPO, 'tools', 'dist', 'task-core.mjs');
-const SKILL_SRC = path.join(REPO, 'skills', 'task-data-todo', 'SKILL.md');
-const SKILL_NAME = 'task-data-todo';
+const SKILL_SRC = path.join(REPO, 'skills', 'task-dada-todo', 'SKILL.md');
+const SKILL_NAME = 'task-dada-todo';
 const INBOX = 'inbox';
 const PRIORITY = { high: '🔺', medium: '🔼', low: '🔽', none: '' };
 const PRIORITY_RANK = { '🔺': 3, '🔼': 2, '🔽': 1 };
