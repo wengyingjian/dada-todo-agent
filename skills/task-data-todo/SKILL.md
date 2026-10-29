@@ -38,6 +38,7 @@ task show "inbox#3#00-收件箱/InBox.md"     # 直接给 guid
 # 查询
 task ls                                  # 未完成（默认先优先级、后截止日）
 task ls --status done --limit 5          # 已完成；--limit 0 不限
+task ls --status done --done-date today  # 按完成日筛（查「今天完成了什么」）
 task ls --date today | tomorrow | week | 2026-11-05
 task ls --list "产品改进" --group P0      # 某清单的某个 ### 分组
 task ls --tag 文档 --match 预算           # 行内 #标签 / 标题描述关键词
@@ -48,6 +49,8 @@ task show "补英文 README"                 # 详情：描述 / 归属 / 子任
 task add "整理 Q4 预算表" --json                          # 收件箱、无日期
 task add "交周报" --due tomorrow                          # 行内 📅，不建日记文件
 task add "评审会" --due 2026-11-03 --time 14:30
+task add "复盘会" --due 2026-10-29 --time 09:00-10:30        # 时间段
+task add "写周报" --done --due today --time 09:00-10:00       # 直接记一条已完成的历史记录（✅ 当天）
 task add "补英文 README" --list "产品改进" --group P0 --priority high --desc "翻译首页"
 
 # 修改
@@ -55,6 +58,7 @@ task edit "体检预约" --due 2026-11-06 --priority high
 task edit "体检预约" --desc "带医保卡"          # 改描述；--desc "" 清空
 task edit "体检预约" --summary "体检（含复查）"  # 改标题
 task edit "体检预约" --clear-due               # 清日期
+task edit "评审会" --due 2026-11-03 --time 14:00-15:30   # 改成时间段
 task status "评审会" done                      # todo / done / cancelled 三态互转
 task move "加暗色适配" --group P0               # 同文件换分组
 task move "补英文 README" --list 收件箱          # 跨文件到「未分组」
@@ -79,11 +83,15 @@ task group add "新清单" "待排期"                  # 新建分组（落在�
 - **缺省落收件箱、未分组**（第一个 `###` 之前）。用户没指定清单就不自己挑。
 - **清单 / 分组先查再写**：`lists` 拿真名，`groups` 拿分组标题；写错会报错并回传候选。
 - **分组只有一层**（`###` 标题），没有子分组；`####` 不算分组。清单文件里的任务归到其上方最近的 `###`。
-- **日期是行内标记**：`📅` 截止日、`🛫` 开始日。只给日期时不加 `--time`。
+- **日期是行内标记**：`📅` 截止日、`🛫` 开始日。只给日期时不加 `--time`；
+  `--time` 可给单点 `HH:MM` 或区间 `HH:MM-HH:MM`（跨午夜自动落到次日）。
 - **改期语义与插件一致**：把已有截止日的任务改到更晚日期，会把原截止日变成开始日（`🛫 原日 📅 新日`）；
   只想单纯换一天，就先 `--clear-due` 再 `--due`。日记任务改期 = 文件开始日不动、`📅` 改到新日。
 - **跨文件移动**默认按拖拽语义清空日期，`--keep-date` 才把日记文件名里的日期物化成行内标记。
-- **已完成记录**：`status done` 会写 `✅ 当天`；CLI 不支持「已完成 + 具体时间区间」那种记录（要插件侧改）。
+- **已完成记录**：`status done` 给已有任务勾完成（保留它原有的时间/区间，并写 `✅ 当天`）；
+  要把一件**已经做完的事**直接记进库，用 `task add "标题" --done --due <日期> --time 09:00-10:00`
+  （不写 ✅ 的项目也支持 `add --done` 不带日期）。查完成日有没有对应的过滤用 `--done-date`，
+  `--date` 始终按截止日筛。
 - Obsidian 开着时约 500ms 自动刷新；关着也会写进 Markdown，下次打开可见。
 
 ## 输出契约
@@ -93,7 +101,7 @@ task group add "新清单" "待排期"                  # 新建分组（落在�
 ```json
 {"ok":true,"cmd":"ls","total":3,"shown":3,"items":[
   {"guid":"inbox#3#00-收件箱/InBox.md","summary":"交周报","status":"todo",
-   "due":"2026-10-30","time":"","priority":"🔺","tags":[],"group":"工作",
+   "due":"2026-10-30","time":"","timeEnd":"","done":"","priority":"🔺","tags":[],"group":"工作",
    "list":{"key":"inbox","name":"收件箱","type":"inbox"},"subtaskCount":1,"lineNo":3}
 ]}
 ```

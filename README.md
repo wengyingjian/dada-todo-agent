@@ -150,6 +150,7 @@ node tools/task.mjs install      # one-time: installs `task` (default ~/.local/b
 task add "Draft Q4 budget" --due tomorrow --json    # create (inbox / checklist / ### group / inline date)
 task ls --status todo --date week --json            # query by checklist / group / status / date / tag / keyword
 task show "Draft Q4 budget"                         # details: description / location / subtasks
+task add "Wrote weekly report" --done --due today --time 09:00-10:00   # record a finished entry
 task edit "Draft Q4 budget" --due 2026-11-06 --priority high
 task status "Draft Q4 budget" done                  # todo / done / cancelled
 task move "Draft Q4 budget" --list Product --group P1

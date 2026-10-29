@@ -178,6 +178,7 @@ node tools/task.mjs install      # 一次性：装 task 命令（默认 ~/.local
 task add "整理 Q4 预算表" --due tomorrow --json     # 建任务（收件箱 / 清单 / ### 分组 / 行内日期）
 task ls --status todo --date week --json           # 查：按清单 / 分组 / 状态 / 日期 / 标签 / 关键词
 task show "整理 Q4 预算表"                          # 详情：描述 / 归属 / 子任务
+task add "写周报" --done --due today --time 09:00-10:00   # 直接记一条已完成的历史记录
 task edit "整理 Q4 预算表" --due 2026-11-06 --priority high
 task status "整理 Q4 预算表" done                   # todo / done / cancelled
 task move "整理 Q4 预算表" --list 产品改进 --group P1

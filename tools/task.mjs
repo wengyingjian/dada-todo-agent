@@ -65,6 +65,7 @@ ls 选项：
   --group <分组标题>          只看某 ### 分组（对清单与收件箱有效）
   --status <todo|done|cancelled|all>    默认 todo
   --date <today|tomorrow|week|YYYY-MM-DD>  按截止日筛（week = 今天起 7 天）
+  --done-date <同 --date 取值>  按完成日筛（查「今天完成了什么」用这个）
   --tag <标签>                按行内 #标签 筛（含子标签 tag/xxx）
   --match <关键词>            标题或描述包含即命中（不区分大小写）
   --all-levels                连子任务一起列（默认只列顶层）
@@ -74,10 +75,11 @@ ls 选项：
 
 add / edit 选项：
   --due <YYYY-MM-DD|today|tomorrow|+Nd>   截止日期（行内 📅，不建日记文件）
-  --time <HH:MM>                          具体时间（需配合 --due）
+  --time <HH:MM|HH:MM-HH:MM>              具体时间或时间段（需配合 --due）
   --list <清单名|清单路径|收件箱>          add：写进该清单；缺省收件箱
   --group <分组标题>                       add：写进该 ### 分组；缺省「未分组」
   --priority <high|medium|low|none>        优先级（none = 清除）
+  --done                                   add：直接记成已完成（写 ✅ 今天）
   --desc <文本>                            任务描述（缩进行）
   --summary <文本>                         改标题（edit）
   --clear-due                              清除截止日期（edit）
@@ -115,7 +117,7 @@ class CliError extends Error {
 
 const BOOLEAN_FLAGS = new Set([
   'json', 'dry-run', 'help', 'build', 'link', 'quiet',
-  'yes', 'clear-due', 'keep-date', 'all-levels',
+  'yes', 'clear-due', 'keep-date', 'all-levels', 'done',
 ]);
 const REPEATABLE_FLAGS = new Set(['skill-dir']);
 
@@ -199,12 +201,18 @@ function parseDue(value) {
   return { at: startOfDay(d), key: fmtDay(d) };
 }
 
+// 时间：HH:MM 或 HH:MM-HH:MM（跨午夜时结束时间落到次日）
 function parseTime(value) {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(String(value || '').trim());
-  if (!m) throw new CliError('bad_time', `无法识别的时间：${value}（用 HH:MM）`);
-  const h = Number(m[1]); const min = Number(m[2]);
-  if (h > 23 || min > 59) throw new CliError('bad_time', `时间越界：${value}`);
-  return { h, min };
+  const m = /^(\d{1,2}):(\d{2})(?:\s*[-~]\s*(\d{1,2}):(\d{2}))?$/.exec(String(value || '').trim());
+  if (!m) throw new CliError('bad_time', `无法识别的时间：${value}（用 HH:MM 或 HH:MM-HH:MM）`);
+  const toOffset = (hs, ms) => {
+    const h = Number(hs); const min = Number(ms);
+    if (h > 23 || min > 59) throw new CliError('bad_time', `时间越界：${value}`);
+    return (h * 60 + min) * 60000;
+  };
+  const start = toOffset(m[1], m[2]);
+  const end = m[3] != null ? toOffset(m[3], m[4]) : null;
+  return { start, end, endOffset: end == null ? null : (end > start ? end : end + DAY) };
 }
 
 function dateRange(value) {
@@ -392,6 +400,8 @@ function viewOf(t, gmap) {
     priority: t.priority || '',
     due: t.dueAt != null ? fmtDay(t.dueAt) : '',
     time: t.time || '',
+    timeEnd: t.timeEnd || '',
+    done: t.completedAt != null ? fmtDay(t.completedAt) : '',
     dueAllDay: !!t.dueAllDay,
     tags: t.tags || [],
     links: t.links || [],
@@ -407,8 +417,11 @@ function textLine(t, gmap) {
   const mark = t.cancelled ? '-' : (t.completed ? 'x' : ' ');
   const where = t.date === INBOX ? '收件箱' : (isListKey(t.date) ? keyLabel(t.date) : `日记 ${t.date}`);
   const g = gmap ? (gmap.get(`${t.date}|${t.lineNo}`) || '') : '';
-  const parts = [`[${mark}]`];
-  parts.push(t.dueAt != null ? `${fmtDay(t.dueAt)}${t.time ? ' ' + t.time : ''}` : '（无日期）');
+  const timeText = t.time ? (t.timeEnd ? `${t.time}-${t.timeEnd}` : t.time) : '';
+  const when = t.dueAt != null
+    ? `${fmtDay(t.dueAt)}${timeText ? ' ' + timeText : ''}`
+    : (timeText ? `${timeText}（无日期）` : '（无日期）');
+  const parts = [`[${mark}]`, when];
   if (t.priority) parts.push(t.priority);
   parts.push(`${'  '.repeat(t.indent || 0)}${t.summary}`);
   if (t.description) parts.push('…');
@@ -476,17 +489,19 @@ async function cmdAdd(core, { flags, pos }, out) {
   const before = fs.existsSync(absPath) ? fs.readFileSync(absPath, 'utf8') : '';
 
   const task = { summary };
+  if (flags.done) task.completed = true; // 直接写已完成记录（✅ 今天）
   const due = parseDue(flags.due);
   if (due) {
-    if (flags.time) {
-      const { h, min } = parseTime(flags.time);
+    if (flags.time != null) {
+      const tm = parseTime(flags.time);
       task.dueAllDay = false;
-      task.dueAt = due.at + h * 3600000 + min * 60000;
+      task.dueAt = due.at + tm.start;
+      if (tm.endOffset != null) task.dueEndAt = due.at + tm.endOffset;
     } else {
       task.dueAllDay = true; // 关键：否则 API 会把午夜写成 "00:00" 时间前缀
       task.dueAt = due.at;
     }
-  } else if (flags.time) {
+  } else if (flags.time != null) {
     throw new CliError('bad_args', '--time 需要同时给 --due');
   }
   const pKey = String(flags.priority || 'none').toLowerCase();
@@ -586,6 +601,10 @@ async function cmdLs(core, { flags }, out) {
     const [from, to] = dateRange(flags.date);
     items = items.filter((t) => t.dueAt != null && t.dueAt >= from && t.dueAt < to);
   }
+  if (flags['done-date'] != null) {
+    const [from, to] = dateRange(flags['done-date']);
+    items = items.filter((t) => t.completedAt != null && t.completedAt >= from && t.completedAt < to);
+  }
   if (flags.tag != null) {
     const tag = String(flags.tag).replace(/^#/, '');
     items = items.filter((t) => (t.tags || []).some((x) => x === tag || String(x).startsWith(tag + '/')));
@@ -614,6 +633,7 @@ async function cmdLs(core, { flags }, out) {
       list: flags.list != null ? String(flags.list) : '',
       group: flags.group != null ? String(flags.group) : '',
       status, date: flags.date != null ? String(flags.date) : '',
+      doneDate: flags['done-date'] != null ? String(flags['done-date']) : '',
       tag: flags.tag != null ? String(flags.tag) : '',
       match: flags.match != null ? String(flags.match) : '',
     },
@@ -635,8 +655,9 @@ async function cmdShow(core, { flags, pos }, out) {
     `${view.summary}   [${STATUS_LABEL[view.status]}]`,
     `  guid   ${view.guid}`,
     `  归属   ${view.list.name}${view.group ? ' › ' + view.group : ''}`,
-    `  日期   ${view.due || '无'}${view.time ? ' ' + view.time : (view.due ? '（全天）' : '')}`,
+    `  日期   ${view.due || '无'}${view.time ? ' ' + view.time + (view.timeEnd ? '-' + view.timeEnd : '') : (view.due ? '（全天）' : '')}`,
     view.priority ? `  优先级 ${view.priority}` : '',
+    view.done ? `  完成于 ${view.done}` : '',
     view.tags.length ? `  标签   ${view.tags.map((x) => '#' + x).join(' ')}` : '',
     view.description ? `  描述   ${view.description.split('\n').join('\n         ')}` : '',
     `  子任务 ${subtasks.length}`,
@@ -659,21 +680,23 @@ async function cmdEdit(core, { flags, pos }, out) {
   if (flags.summary != null) patch.summary = String(flags.summary);
   if (flags.desc != null) patch.description = String(flags.desc);
   if (flags.priority != null) patch.priority = priorityPatch(flags.priority);
-  if (flags['clear-due']) { patch.dueAt = null; patch.startAt = null; }
+  if (flags['clear-due']) { patch.dueAt = null; patch.startAt = null; patch.dueEndAt = null; }
   else if (flags.due != null) {
     const due = parseDue(flags.due);
     if (flags.time != null) {
-      const { h, min } = parseTime(flags.time);
+      const tm = parseTime(flags.time);
       patch.dueAllDay = false;
-      patch.dueAt = due.at + h * 3600000 + min * 60000;
+      patch.dueAt = due.at + tm.start;
+      patch.dueEndAt = tm.endOffset != null ? due.at + tm.endOffset : null;
     } else {
       patch.dueAllDay = true;
       patch.dueAt = due.at;
+      patch.dueEndAt = null;
     }
   } else if (flags.time != null) {
     throw new CliError('bad_args', '--time 需要同时给 --due');
   }
-  const touched = ['summary', 'description', 'priority', 'dueAt'].filter((k) => Object.prototype.hasOwnProperty.call(patch, k));
+  const touched = ['summary', 'description', 'priority', 'dueAt', 'dueEndAt'].filter((k) => Object.prototype.hasOwnProperty.call(patch, k));
   if (!touched.length) throw new CliError('bad_args', '没有要改的内容：--summary / --desc / --priority / --due / --clear-due');
 
   const dryRun = !!flags['dry-run'];
