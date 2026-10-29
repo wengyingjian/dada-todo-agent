@@ -4,6 +4,7 @@ import { t } from '../i18n/index.js';
 import {
   loadAll, loadChecklists, loadByList, loadByDate, getDetail,
   loadChecklistGroups, loadInboxGroups, createChecklist,
+  createGroup, renameGroup, deleteGroup,
   createTask, createChecklistTask, updateTask, deleteTask, toggleTask, setChecklistStatus, createSubtask, listSubtasks,
   moveChecklistTask, moveTaskToGroup
 } from '../api/tasks.js';
@@ -49,6 +50,11 @@ const api = {
   async loadInboxGroups() { return await unwrap(loadInboxGroups()); },
   // 新建清单（只要名称）：返回 { key:'cl:相对路径', name, total:0, done:0 }，形状与 loadChecklists 的项一致
   async createChecklist(name) { return (await unwrap(createChecklist(name))).item; },
+  // ### 分组维护（清单 / 收件箱通用）：createGroup 返回 { key, path, title, groups }
+  async createGroup(listKey, title) { return await unwrap(createGroup(listKey, title)); },
+  async renameGroup(listKey, oldTitle, newTitle) { return await unwrap(renameGroup(listKey, oldTitle, newTitle)); },
+  // opts.mode：'keep'（默认，任务挪到未分组）| 'delete'（连任务一起删）；opts.expectTasks 可传任务数做并发校验
+  async deleteGroup(listKey, title, opts) { return await unwrap(deleteGroup(listKey, title, opts)); },
   async loadByDate(dateKey) { return (await unwrap(loadByDate(dateKey))).items || []; },
   async getDetail(guid) {
     const items = await this.loadByDate(String(guid || '').split('#')[0]);

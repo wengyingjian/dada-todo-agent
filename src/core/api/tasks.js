@@ -477,6 +477,167 @@ export async function createChecklist(name) {
   return res(201, { ok: true, key, path, item: { key, name: n, total: 0, done: 0 } });
 }
 
+// ---------- ### 分组（清单一层结构）的新建 / 重命名 / 删除 ----------
+// 分组只是文件里的 `### 标题`，不是独立数据结构：新建 = 追加标题，重命名 = 改标题文字，
+// 删除 = 去标题（组内任务默认整块挪到「未分组」，不丢任务）。日记文件没有分组概念，只支持清单 / 收件箱。
+
+// 分组标题：非空且单行（标题里允许 emoji / 空格 / Markdown 行内格式，与手工写标题一致）
+function groupTitleError(title) {
+  const t = String(title == null ? '' : title).trim();
+  if (!t) return 'missing_title';
+  if (/[\r\n]/.test(t)) return 'bad_title';
+  return '';
+}
+
+// 文件内的 ### 标题及其行号（与 readGrouped / moveTaskToGroup / 视图层同一套正则）
+function groupHeadings(lines) {
+  const out = [];
+  (lines || []).forEach((line, idx) => {
+    const m = /^###\s+(.+?)\s*$/.exec(line);
+    if (m) out.push({ idx, title: m[1].trim() });
+  });
+  return out;
+}
+
+// 一个分组的内容范围 [start, end)：标题行 → 下一个 ###（或文件末尾）
+function groupRanges(headings, title, total) {
+  return headings
+    .filter((h) => h.title === title)
+    .map((h) => {
+      const next = headings.find((x) => x.idx > h.idx);
+      return [h.idx, next ? next.idx : total];
+    });
+}
+
+// 读取分组操作的对象：清单或收件箱（createIfMissing 只对收件箱生效，清单文件不存在视为 no_file）
+async function readGroupTarget(listKey, createIfMissing) {
+  if (listKey !== INBOX_KEY && !isListKey(listKey)) return { error: res(400, { ok: false, reason: 'bad_list' }) };
+  const path = taskFilePath(listKey);
+  if (!path) return { error: res(400, { ok: false, reason: 'bad_list' }) };
+  if (!vault().getAbstractFileByPath(path)) {
+    if (!createIfMissing || listKey !== INBOX_KEY) return { error: res(404, { ok: false, reason: 'no_file' }) };
+    await ensureInboxFile();
+  }
+  const doc = await readTasks(path, listKey);
+  return { path, doc, headings: groupHeadings(doc.lines) };
+}
+
+// 新建 ### 分组：标题追加到文件末尾（与手工加标题一致），不移动任何任务；重名 → 409
+export async function createGroup(listKey, title) {
+  noteSelfWrite();
+  const titleErr = groupTitleError(title);
+  if (titleErr) return res(400, { ok: false, reason: titleErr });
+  const t = String(title).trim();
+  const ctx = await readGroupTarget(listKey, true);
+  if (ctx.error) return ctx.error;
+  if (ctx.headings.some((h) => h.title === t)) {
+    return res(409, { ok: false, reason: 'group_exists', groups: ctx.headings.map((h) => h.title) });
+  }
+  const lines = ctx.doc.lines.slice();
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  if (lines.length) lines.push('');
+  lines.push(`### ${t}`, '');
+  await writeTasks(ctx.path, ctx.doc.head, lines);
+  return res(201, {
+    ok: true, key: listKey, path: ctx.path, title: t,
+    groups: ctx.headings.map((h) => h.title).concat(t)
+  });
+}
+
+// 重命名 ### 分组：只改标题文字，任务留在原位置（行号不变），改名后仍归到新分组；同名标题全部改
+export async function renameGroup(listKey, oldTitle, newTitle) {
+  noteSelfWrite();
+  const oldT = String(oldTitle == null ? '' : oldTitle).trim();
+  if (!oldT) return res(400, { ok: false, reason: 'missing_title' });
+  const titleErr = groupTitleError(newTitle);
+  if (titleErr) return res(400, { ok: false, reason: titleErr });
+  const newT = String(newTitle).trim();
+  const ctx = await readGroupTarget(listKey, false);
+  if (ctx.error) return ctx.error;
+  const ranges = groupRanges(ctx.headings, oldT, ctx.doc.lines.length);
+  if (!ranges.length) {
+    return res(404, { ok: false, reason: 'group_not_found', groups: ctx.headings.map((h) => h.title) });
+  }
+  const flat = flattenTasks(ctx.doc.roots);
+  const tasks = flat.filter((n) => ranges.some(([start, end]) => n.lineNo > start && n.lineNo < end)).length;
+  if (oldT === newT) {
+    return res(200, { ok: true, key: listKey, path: ctx.path, from: oldT, title: newT, renamed: 0, tasks });
+  }
+  if (ctx.headings.some((h) => h.title === newT)) {
+    return res(409, { ok: false, reason: 'group_exists', groups: ctx.headings.map((h) => h.title) });
+  }
+  const lines = ctx.doc.lines.slice();
+  for (const [start] of ranges) lines[start] = `### ${newT}`;
+  await writeTasks(ctx.path, ctx.doc.head, lines);
+  return res(200, { ok: true, key: listKey, path: ctx.path, from: oldT, title: newT, renamed: ranges.length, tasks });
+}
+
+// 删除 ### 分组。opts.mode：
+//   'keep'（默认）：只删标题，组内任务整块挪到「未分组」（第一个 ### 之前），不丢任务；
+//   'delete'：连组内任务一起删（描述行 / 子任务一并删）。
+// opts.expectTasks：可选的任务数校验（UI 确认弹窗带上用户看到的数量），对不上返回 409 stale_group。
+export async function deleteGroup(listKey, title, opts) {
+  noteSelfWrite();
+  const t = String(title == null ? '' : title).trim();
+  if (!t) return res(400, { ok: false, reason: 'missing_title' });
+  const mode = (opts && opts.mode) || 'keep';
+  if (mode !== 'keep' && mode !== 'delete') return res(400, { ok: false, reason: 'bad_mode' });
+  const ctx = await readGroupTarget(listKey, false);
+  if (ctx.error) return ctx.error;
+  const ranges = groupRanges(ctx.headings, t, ctx.doc.lines.length);
+  if (!ranges.length) {
+    return res(404, { ok: false, reason: 'group_not_found', groups: ctx.headings.map((h) => h.title) });
+  }
+  const rootsInRange = (start, end) => ctx.doc.roots.filter((n) => n.lineNo > start && n.lineNo < end);
+  const flat = flattenTasks(ctx.doc.roots);
+  let tasks = 0;
+  for (const [start, end] of ranges) {
+    const inside = new Set();
+    for (const n of rootsInRange(start, end)) for (const ln of collectLineNos(n)) inside.add(ln);
+    tasks += flat.filter((n) => inside.has(n.lineNo)).length;
+  }
+  if (opts && opts.expectTasks != null && Number(opts.expectTasks) !== tasks) {
+    return res(409, { ok: false, reason: 'stale_group', tasks });
+  }
+
+  const removed = new Set();
+  const blocks = [];
+  for (const [start, end] of ranges) {
+    removed.add(start); // 标题行
+    for (const n of rootsInRange(start, end)) {
+      for (const ln of collectLineNos(n)) removed.add(ln);
+      if (mode === 'keep') blocks.push(serializeBlock(n, n.indentStr || ''));
+    }
+  }
+  let lines = ctx.doc.lines.filter((_, i) => !removed.has(i));
+  if (blocks.length) {
+    // 组内任务 → 「未分组」区（第一个 ### 之前；没有标题则文件末尾）
+    let insertAt = lines.findIndex((l) => /^###\s+/.test(l));
+    if (insertAt < 0) insertAt = lines.length;
+    while (insertAt > 0 && !lines[insertAt - 1].trim()) insertAt--;
+    const moved = [];
+    blocks.forEach((b, i) => { if (i) moved.push(''); moved.push(...b); });
+    if (insertAt > 0) moved.unshift('');
+    lines.splice(insertAt, 0, ...moved);
+  }
+  // 删标题后合并连续空行、去掉文件尾空行，保持文件整洁
+  const cleaned = [];
+  for (const line of lines) {
+    if (!line.trim() && cleaned.length && !cleaned[cleaned.length - 1].trim()) continue;
+    cleaned.push(line);
+  }
+  while (cleaned.length && !cleaned[cleaned.length - 1].trim()) cleaned.pop();
+  // 前面没有剩空行时补一行，保持「frontmatter 与正文之间空一行」的文件风格
+  if (cleaned.length && cleaned[0].trim()) cleaned.unshift('');
+  await writeTasks(ctx.path, ctx.doc.head, cleaned);
+  return res(200, {
+    ok: true, key: listKey, path: ctx.path, title: t, mode,
+    tasks,
+    movedToUngrouped: mode === 'keep' ? tasks : 0,
+    groups: ctx.headings.filter((h) => h.title !== t).map((h) => h.title)
+  });
+}
+
 // 读取一个任务文件并按 ### 三级标题分组（清单与收件箱共用）。
 // 任务归属到其之前最近的一个 ### 标题；标题前的任务归入「未分组」（title = ''）。
 // 返回文件内全部任务（不过滤日期 / 完成态），过滤交由视图层按各自场景处理。
