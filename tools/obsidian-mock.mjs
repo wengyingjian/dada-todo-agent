@@ -119,9 +119,94 @@ export const app = {
   plugins: { getPlugin() { return null; } },
 };
 
-// 仅日记路径解析会用到；CLI 的收件箱 / 清单路径不触发
-export const moment = (input) => ({ format: () => String(input), locale() { return moment; } });
+// ---- 最小 moment ----
+// api/tasks.js 用 moment 做「日记文件名 <-> 日期键」的双向转换（parseDailyKey / dailyBaseName）。
+// CLI 不建日记文件时用不到，但 ls 会扫描全库日记，所以这里实现一个够用的子集：
+// 按 format 分词解析（YYYY/YY/MM/M/DD/D/ddd/dddd）与反格式化，无 format 时从字符串里抽日期。
+function pad2(n) { return String(n).padStart(2, '0'); }
+const WEEK_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const WEEK_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function tokenize(fmt) {
+  const out = [];
+  for (let i = 0; i < fmt.length;) {
+    const m = /^(YYYY|YY|MM|M|DD|D|ddd|dddd)/.exec(fmt.slice(i));
+    if (m) { out.push(m[0]); i += m[0].length; } else { out.push(fmt[i]); i += 1; }
+  }
+  return out;
+}
+
+function makeDate(y, mo, d) {
+  if (!(y && mo && d)) return null;
+  const dt = new Date(y, mo - 1, d);
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+  return dt;
+}
+
+function parseWithFormat(input, fmt) {
+  const s = String(input);
+  const toks = tokenize(String(fmt));
+  const got = {};
+  let pos = 0;
+  const num = (maxLen) => {
+    const m = new RegExp('^\\d{1,' + maxLen + '}').exec(s.slice(pos));
+    if (!m) return null;
+    pos += m[0].length;
+    return Number(m[0]);
+  };
+  for (const t of toks) {
+    if (t === 'YYYY') { const v = num(4); if (v == null) return null; got.y = v; }
+    else if (t === 'YY') { const v = num(2); if (v == null) return null; got.y = 2000 + v; }
+    else if (t === 'MM' || t === 'M') { const v = num(2); if (v == null) return null; got.m = v; }
+    else if (t === 'DD' || t === 'D') { const v = num(2); if (v == null) return null; got.d = v; }
+    else if (t === 'ddd' || t === 'dddd') {
+      const m = /^[^\d\-._/\s]+/.exec(s.slice(pos));
+      if (!m) return null;
+      pos += m[0].length;
+    } else {
+      if (s[pos] !== t) return null;
+      pos += 1;
+    }
+  }
+  return makeDate(got.y, got.m, got.d);
+}
+
+function parseLoose(input) {
+  const s = String(input);
+  let m = /(\d{4})[-._/](\d{1,2})[-._/](\d{1,2})/.exec(s);
+  if (m) return makeDate(Number(m[1]), Number(m[2]), Number(m[3]));
+  m = /(\d{1,2})[-._/](\d{1,2})[-._/](\d{4})/.exec(s);
+  if (m) return makeDate(Number(m[3]), Number(m[1]), Number(m[2]));
+  return null;
+}
+
+export function moment(input, fmt) {
+  const dt = input == null ? new Date() : (fmt ? parseWithFormat(input, fmt) : parseLoose(input));
+  const m = {
+    isValid: () => !!dt,
+    toDate: () => dt,
+    format(out) {
+      if (!dt) return 'Invalid date';
+      if (!out) return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
+      return tokenize(String(out)).map((t) => {
+        if (t === 'YYYY') return String(dt.getFullYear());
+        if (t === 'YY') return String(dt.getFullYear()).slice(-2);
+        if (t === 'MM') return pad2(dt.getMonth() + 1);
+        if (t === 'M') return String(dt.getMonth() + 1);
+        if (t === 'DD') return pad2(dt.getDate());
+        if (t === 'D') return String(dt.getDate());
+        if (t === 'ddd') return WEEK_SHORT[dt.getDay()];
+        if (t === 'dddd') return WEEK_LONG[dt.getDay()];
+        return t;
+      }).join('');
+    },
+    locale() { return m; },
+    clone() { return moment(input, fmt); },
+  };
+  return m;
+}
 moment.locale = () => 'zh-cn';
+
 export const normalizePath = (p) => String(p || '').replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^\/+|\/+$/g, '');
 export const Platform = { isDesktopApp: true, isMobile: false };
 export const requestUrl = async () => { throw new Error('requestUrl 在 CLI 中不可用'); };

@@ -140,19 +140,28 @@ ln -s "$(pwd)/dada-todo-list" "your-vault/.obsidian/plugins/dada-todo-list"
 ### 🤖 For AI agents (CLI + skill)
 
 The repo ships a command-line entry (`tools/task.mjs`) and a matching skill (`skills/task-data-todo/`) so agents can
-create tasks with the plugin's own semantics (inbox / checklists / `###` groups / inline dates) without hand-writing
-Markdown or reading the plugin source. The CLI does not duplicate the format: it bundles the real `api/tasks.js`
-(via esbuild, with `obsidian` replaced by a filesystem mock), so output matches creating a task inside the plugin.
+**read and write** tasks with the plugin's own semantics — no hand-written Markdown, no need to read the plugin source.
+The CLI does not duplicate the format: it bundles the real `api/tasks.js` (via esbuild, with `obsidian` replaced by a
+filesystem mock), so results match operating inside the plugin.
 
 ```bash
-node tools/task.mjs install     # one-time: installs `task` (default ~/.local/bin) and the skill into existing agent skill dirs
-task add "Draft Q4 budget" --due tomorrow --json
-task lists --json               # checklist names / keys / open counts
-task groups --list "Checklist"  # ### groups in that checklist
+node tools/task.mjs install      # one-time: installs `task` (default ~/.local/bin) and the skill into existing agent skill dirs
+
+task add "Draft Q4 budget" --due tomorrow --json    # create (inbox / checklist / ### group / inline date)
+task ls --status todo --date week --json            # query by checklist / group / status / date / tag / keyword
+task show "Draft Q4 budget"                         # details: description / location / subtasks
+task edit "Draft Q4 budget" --due 2026-11-06 --priority high
+task status "Draft Q4 budget" done                  # todo / done / cancelled
+task move "Draft Q4 budget" --list Product --group P1
+task rm "Draft Q4 budget" --yes
+task sub add "Draft Q4 budget" "Collect data"       # subtask
+task cl add "New checklist"                        # create a checklist
+task group add "New checklist" "Backlog"           # create a ### group
 ```
 
 The vault is resolved from `--vault` → `TASK_VAULT` → the vault currently open in Obsidian; `--dry-run` writes nothing;
-`--json` gives agents a stable result to assert on. Needs Node 18+ and one `npm install` (only for the esbuild bundled with vite).
+`--json` gives agents a stable result to assert on (failures carry a `reason` to self-heal). Needs Node 18+ and one
+`npm install` (only for the esbuild bundled with vite).
 
 ## 📄 License
 
