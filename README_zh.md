@@ -186,6 +186,8 @@ task rm "整理 Q4 预算表" --yes
 task sub add "整理 Q4 预算表" "收集数据"             # 子任务
 task cl add "新清单"                               # 建清单
 task group add "新清单" "待排期"                     # 建 ### 分组
+task group rename "新清单" "待排期" "已排期"           # 重命名分组（任务位置不变）
+task group rm "新清单" "已排期" --yes                  # 删分组（任务移到「未分组」；--with-tasks 连任务删）
 ```
 
 库按 `--vault` → 环境变量 `TASK_VAULT` → Obsidian 当前打开的库 自动定位；`--dry-run` 只演示不落盘；

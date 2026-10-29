@@ -3,7 +3,8 @@
 // 只导出 CLI 用得到的函数；签名与插件内完全一致，不在这里做任何格式转换。
 import { app } from 'obsidian';
 import {
-  initTasksApi, ensureInboxFile, createChecklist, createTask, createChecklistTask, createSubtask,
+  initTasksApi, ensureInboxFile, createChecklist, createGroup, renameGroup, deleteGroup,
+  createTask, createChecklistTask, createSubtask,
   updateTask, toggleTask, setChecklistStatus, deleteTask, moveTaskToGroup, moveChecklistTask,
   loadAll, loadByDate, loadByList, loadChecklists, loadInboxGroups, loadChecklistGroups,
   getDetail, listSubtasks, taskFilePath,
@@ -12,7 +13,8 @@ import { setDryRun, takeOps } from './obsidian-mock.mjs';
 
 export {
   app, setDryRun, takeOps,
-  ensureInboxFile, createChecklist, createTask, createChecklistTask, createSubtask,
+  ensureInboxFile, createChecklist, createGroup, renameGroup, deleteGroup,
+  createTask, createChecklistTask, createSubtask,
   updateTask, toggleTask, setChecklistStatus, deleteTask, moveTaskToGroup, moveChecklistTask,
   loadAll, loadByDate, loadByList, loadChecklists, loadInboxGroups, loadChecklistGroups,
   getDetail, listSubtasks, taskFilePath,

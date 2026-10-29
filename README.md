@@ -158,6 +158,8 @@ task rm "Draft Q4 budget" --yes
 task sub add "Draft Q4 budget" "Collect data"       # subtask
 task cl add "New checklist"                        # create a checklist
 task group add "New checklist" "Backlog"           # create a ### group
+task group rename "New checklist" "Backlog" "Later"  # rename a group (tasks stay put)
+task group rm "New checklist" "Later" --yes          # delete a group (tasks move to ungrouped; --with-tasks removes them)
 ```
 
 The vault is resolved from `--vault` → `TASK_VAULT` → the vault currently open in Obsidian; `--dry-run` writes nothing;

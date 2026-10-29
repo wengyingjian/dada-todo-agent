@@ -72,8 +72,12 @@ task sub add "交周报" "整理数据源" --desc "来自 BI 导出"
 # 清单 / 分组
 task lists                                     # 清单名 / key / 未完成数
 task cl add "新清单"                            # 建清单（tags 自动写好）
-task groups --list "新清单"                      # 列 ### 分组
+task groups --list "新清单"                      # 列 ### 分组（只列标题）
+task group ls "新清单"                            # 分组 + 条数（含「未分组」）
 task group add "新清单" "待排期"                  # 新建分组（落在文件末尾）
+task group rename "新清单" "待排期" "已排期"        # 重命名分组（组内任务位置不变）
+task group rm "新清单" "已排期" --yes              # 删分组：组内任务移到「未分组」
+task group rm "新清单" "已排期" --yes --with-tasks  # 连组内任务（含子任务）一起删
 ```
 
 `--dry-run` 只打印会写什么，不落盘；`--json` 输出机器可读结果（成功/失败都有）。
@@ -83,6 +87,8 @@ task group add "新清单" "待排期"                  # 新建分组（落在�
 - **缺省落收件箱、未分组**（第一个 `###` 之前）。用户没指定清单就不自己挑。
 - **清单 / 分组先查再写**：`lists` 拿真名，`groups` 拿分组标题；写错会报错并回传候选。
 - **分组只有一层**（`###` 标题），没有子分组；`####` 不算分组。清单文件里的任务归到其上方最近的 `###`。
+- **分组支持增删改**：`group add / rename / rm`，对清单与收件箱通用（日记文件没有分组概念）；
+  删分组默认**不丢任务**（挪到「未分组」），只有 `--with-tasks` 才连任务一起删。
 - **日期是行内标记**：`📅` 截止日、`🛫` 开始日。只给日期时不加 `--time`；
   `--time` 可给单点 `HH:MM` 或区间 `HH:MM-HH:MM`（跨午夜自动落到次日）。
 - **改期语义与插件一致**：把已有截止日的任务改到更晚日期，会把原截止日变成开始日（`🛫 原日 📅 新日`）；
@@ -116,7 +122,11 @@ task group add "新清单" "待排期"                  # 新建分组（落在�
 | `group_not_found` | 用返回的 `groups` 挑一个；或先 `task group add` |
 | `ambiguous_vault` / `no_vault` | 用返回的 `vaults` 或用户给的库根加 `--vault` |
 | `no_settings` | 该库没装/没启用插件，或 `--vault` 指错了库 |
-| `confirm_required` | 删除要加 `--yes`；先跟用户确认 |
+| `confirm_required` | 删除（任务 / 分组）要加 `--yes`；先跟用户确认 |
+| `group_exists` | 同名分组已存在：换名，或先 `group rename` 合并 |
+| `group_not_found` | 用返回的 `groups` 挑正确标题（删/改名是对标题操作，不分大小写不模糊匹配） |
+| `no_file` | 清单 / 收件箱文件不存在：先 `lists` 确认清单，或直接 `add` 让收件箱自动创建 |
+| `stale_group` | UI 侧并发的任务数校验失败：重新读取分组再操作 |
 | `bad_date` / `bad_time` / `bad_priority` / `missing_summary` / `bad_status` | 按提示改参数 |
 
 ## 纪律

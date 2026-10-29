@@ -51,6 +51,8 @@ const HELP = `task — Dada Todo List 的任务入口（供 AI agent / 人使用
   task sub add <任务> <标题> [--desc]   # 加子任务
   task cl add <名称>                    # 新建清单
   task group add <清单|收件箱> <标题>    # 新建 ### 分组（落在文件末尾）
+  task group rename <清单|收件箱> <旧标题> <新标题>
+  task group rm <清单|收件箱> <标题> --yes [--with-tasks]   # 默认保留任务（挪到未分组）
   task lists [--json]                   # 清单列表（名称 / key / 未完成数）
   task groups [--list <清单>]           # 某个文件的 ### 分组
   task install [选项]                   # 安装命令行 + agent skill（一次性）
@@ -91,6 +93,7 @@ move 选项：
   --list <清单|收件箱>        目标文件；日记任务必须给
   --group <分组标题>          目标分组；同文件内移动必须给
   --keep-date                 跨文件时保留日期（默认按拖拽语义清空日期）
+  --with-tasks                group rm：连组内任务一起删（默认只删分组、任务挪到未分组）
 
 库的定位（按优先级）：--vault → 环境变量 TASK_VAULT → Obsidian 当前打开的库 →
 库里只有一个库时直接用。多库并存会报错并列出候选，需要显式 --vault。
@@ -117,7 +120,7 @@ class CliError extends Error {
 
 const BOOLEAN_FLAGS = new Set([
   'json', 'dry-run', 'help', 'build', 'link', 'quiet',
-  'yes', 'clear-due', 'keep-date', 'all-levels', 'done',
+  'yes', 'clear-due', 'keep-date', 'all-levels', 'done', 'with-tasks',
 ]);
 const REPEATABLE_FLAGS = new Set(['skill-dir']);
 
@@ -855,27 +858,89 @@ async function cmdCl(core, { flags, pos }, out) {
   return ok(data, `${dryRun ? '[dry-run] 将创建' : '✅ 已创建'}清单：${data.name} → ${data.path}（key: ${data.key}）`);
 }
 
+function groupApiError(r) {
+  const b = (r && r.body) || {};
+  const reason = b.reason || 'unknown';
+  const extra = {};
+  if (b.groups) extra.groups = b.groups;
+  const msg = {
+    group_not_found: '分组不存在',
+    group_exists: '同名分组已存在',
+    no_file: '任务文件不存在',
+    stale_group: `分组里的任务数已变化（现在 ${b.tasks} 条），请重新查看后再操作`,
+    bad_title: '分组标题不能换行',
+    missing_title: '缺少分组标题',
+  }[reason] || `分组操作失败：${reason}`;
+  return new CliError(reason, msg, extra);
+}
+
 async function cmdGroup(core, { flags, pos }, out) {
   core.boot(out.settings);
-  if (String(pos[1] || '') !== 'add') throw new CliError('bad_args', '用法：task group add <清单|收件箱> <标题>');
+  const action = String(pos[1] || '');
   const target = (pos[2] || flags.list || '').trim();
-  const title = (pos.slice(3).join(' ') || flags.title || '').trim();
-  if (!target) throw new CliError('bad_args', '缺少目标：task group add <清单|收件箱> <标题>');
-  if (!title) throw new CliError('missing_title', '缺少分组标题：task group add <清单|收件箱> "标题"');
-  if (/[\r\n]/.test(title)) throw new CliError('bad_title', '分组标题不能换行');
-  const key = await resolveTargetKey(core, target);
-  if (key === INBOX) await core.ensureInboxFile();
-  const relPath = core.taskFilePath(key);
-  const absPath = path.join(out.vault, relPath);
-  if (!fs.existsSync(absPath)) throw new CliError('no_file', `文件不存在：${relPath}`);
-  const headings = groupTitlesOf(out.vault, relPath);
-  if (headings.includes(title)) throw new CliError('group_exists', `分组已存在：### ${title}`);
-  const dryRun = !!flags['dry-run'];
-  const content = fs.readFileSync(absPath, 'utf8');
-  const next = content.replace(/\s+$/, '') + `\n\n### ${title}\n`;
-  if (!dryRun) fs.writeFileSync(absPath, next, 'utf8');
-  const data = { ok: true, cmd: 'group.add', dryRun, key, path: relPath, title, groups: [...headings, title] };
-  return ok(data, `${dryRun ? '[dry-run] 将新增' : '✅ 已新增'}分组 ### ${title} → ${relPath}（落在文件末尾）`);
+
+  // 分组是文件内的一层结构：目标只接受「清单」或「收件箱」
+  const resolve = async () => {
+    if (!target) throw new CliError('bad_args', '缺少目标：task group <add|rename|rm> <清单|收件箱> ...');
+    return resolveTargetKey(core, target);
+  };
+  const dryRun = () => { const d = !!flags['dry-run']; core.setDryRun(d); core.takeOps(); return d; };
+
+  if (action === 'ls' || action === 'list') {
+    const key = await resolve();
+    const r = key === INBOX ? await core.loadInboxGroups() : await core.loadChecklistGroups(key);
+    if (!r || r.status !== 200) throw groupApiError(r);
+    const groups = (r.body.groups || []).map((g) => ({ title: g.title, tasks: (g.tasks || []).length, done: (g.tasks || []).filter((t) => t.completed && !t.cancelled).length }));
+    const relPath = core.taskFilePath(key);
+    const data = { ok: true, cmd: 'group.ls', key, path: relPath, groups };
+    const text = [
+      `${relPath}（${keyLabel(key)}）的分组 ${groups.length} 个：`,
+      ...groups.map((g) => `  ### ${g.title || '（未分组）'}  —  ${g.tasks} 条（完成 ${g.done}）`),
+    ].join('\n');
+    return ok(data, text);
+  }
+
+  if (action === 'add') {
+    const title = (pos.slice(3).join(' ') || flags.title || '').trim();
+    if (!title) throw new CliError('missing_title', '缺少分组标题：task group add <清单|收件箱> "标题"');
+    const key = await resolve();
+    const d = dryRun();
+    const r = await core.createGroup(key, title);
+    if (!r || r.status !== 201) throw groupApiError(r);
+    const data = { ok: true, cmd: 'group.add', dryRun: d, key, path: r.body.path, title: r.body.title, groups: r.body.groups };
+    return ok(data, `${d ? '[dry-run] 将新增' : '✅ 已新增'}分组 ### ${r.body.title} → ${r.body.path}（落在文件末尾）`);
+  }
+
+  if (action === 'rename') {
+    const oldTitle = (pos[3] || '').trim();
+    const newTitle = (pos.slice(4).join(' ') || flags.title || '').trim();
+    if (!oldTitle) throw new CliError('bad_args', '用法：task group rename <清单|收件箱> <旧标题> <新标题>');
+    if (!newTitle) throw new CliError('missing_title', '缺少新分组标题');
+    const key = await resolve();
+    const d = dryRun();
+    const r = await core.renameGroup(key, oldTitle, newTitle);
+    if (!r || r.status !== 200) throw groupApiError(r);
+    const data = { ok: true, cmd: 'group.rename', dryRun: d, key, path: r.body.path, from: r.body.from, title: r.body.title, renamed: r.body.renamed, tasks: r.body.tasks };
+    return ok(data, `${d ? '[dry-run] 将重命名' : '✅ 已重命名'}分组：### ${r.body.from} → ### ${r.body.title}（组内 ${r.body.tasks} 条任务，位置不变）`);
+  }
+
+  if (action === 'rm' || action === 'remove' || action === 'delete') {
+    const title = (pos.slice(3).join(' ') || flags.title || '').trim();
+    if (!title) throw new CliError('bad_args', '用法：task group rm <清单|收件箱> <标题> --yes [--with-tasks]');
+    if (!flags.yes) throw new CliError('confirm_required', '删除分组不可恢复：确认就加 --yes（默认保留组内任务，挪到「未分组」；连任务一起删加 --with-tasks）');
+    const key = await resolve();
+    const mode = flags['with-tasks'] ? 'delete' : 'keep';
+    const d = dryRun();
+    const r = await core.deleteGroup(key, title, { mode });
+    if (!r || r.status !== 200) throw groupApiError(r);
+    const data = { ok: true, cmd: 'group.rm', dryRun: d, key, path: r.body.path, title: r.body.title, mode, tasks: r.body.tasks, movedToUngrouped: r.body.movedToUngrouped, groups: r.body.groups };
+    const text = mode === 'keep'
+      ? `${d ? '[dry-run] 将删除' : '✅ 已删除'}分组 ### ${r.body.title}（${r.body.tasks} 条任务移到「未分组」）→ ${r.body.path}`
+      : `${d ? '[dry-run] 将删除' : '✅ 已删除'}分组 ### ${r.body.title} 及组内 ${r.body.tasks} 条任务 → ${r.body.path}`;
+    return ok(data, text);
+  }
+
+  throw new CliError('bad_args', '用法：task group <ls|add|rename|rm> <清单|收件箱> ...');
 }
 
 // ---------- 命令：install ----------
