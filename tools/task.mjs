@@ -2,16 +2,16 @@
 // Dada Todo List 的 agent 入口（CLI）。
 //
 // 设计：CLI 不复制插件的任务格式，而是把插件真实的 api/tasks.js 用 esbuild 打包成
-// tools/dist/dada-core.mjs（obsidian 模块换成 fs 版 mock），直接调用同一套读写函数。
+// tools/dist/task-core.mjs（obsidian 模块换成 fs 版 mock），直接调用同一套读写函数。
 // 因此：清单识别、分组 `###` 插入、幂等建文件、行内日期标记与插件完全一致；
 // 改插件代码后 CLI 首次运行会自动重新打包。
 //
 // 不写死任何个人路径：
 //   - 本文件所在仓库 = 插件仓库（路径全部由 import.meta.url 推导）
 //   - 插件 id 取自仓库根 manifest.json
-//   - Obsidian 库按 --vault / DADA_VAULT / Obsidian 自己的库注册表 自动发现
+//   - Obsidian 库按 --vault / TASK_VAULT / Obsidian 自己的库注册表 自动发现
 //
-// 用法见 `dada --help`；给 agent 的语义说明在 skills/task-data-todo/SKILL.md。
+// 用法见 `task --help`；给 agent 的语义说明在 skills/task-data-todo/SKILL.md。
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -23,7 +23,7 @@ const SELF = fileURLToPath(import.meta.url);
 const REPO = path.resolve(path.dirname(SELF), '..');
 const MOCK = path.join(REPO, 'tools', 'obsidian-mock.mjs');
 const ENTRY = path.join(REPO, 'tools', 'core-entry.mjs');
-const DIST = path.join(REPO, 'tools', 'dist', 'dada-core.mjs');
+const DIST = path.join(REPO, 'tools', 'dist', 'task-core.mjs');
 const SKILL_SRC = path.join(REPO, 'skills', 'task-data-todo', 'SKILL.md');
 const SKILL_NAME = 'task-data-todo';
 const PRIORITY = { high: '🔺', medium: '🔼', low: '🔽', none: '' };
@@ -34,14 +34,14 @@ function pluginId() {
   catch { return 'dada-todo-list'; }
 }
 
-const HELP = `dada — Dada Todo List 的任务入口（供 AI agent / 人使用）
+const HELP = `task — Dada Todo List 的任务入口（供 AI agent / 人使用）
 
 用法：
-  dada add <标题> [选项]         # 创建任务
-  dada lists [--json]            # 列出全部清单（名称 / key / 未完成数）
-  dada groups [--list <清单>]    # 列出收件箱或某清单里的 ### 分组
-  dada install [选项]            # 安装命令行 + agent skill（一次性）
-  dada --help
+  task add <标题> [选项]         # 创建任务
+  task lists [--json]            # 列出全部清单（名称 / key / 未完成数）
+  task groups [--list <清单>]    # 列出收件箱或某清单里的 ### 分组
+  task install [选项]            # 安装命令行 + agent skill（一次性）
+  task --help
 
 add 选项：
   --due <YYYY-MM-DD|today|tomorrow|+Nd>   截止日期（行内 📅，不建日记文件）
@@ -54,11 +54,11 @@ add 选项：
   --dry-run                                只演示会写什么，不落盘
   --json                                   机器可读输出（成功 / 失败都打印 JSON）
 
-库的定位（按优先级）：--vault → 环境变量 DADA_VAULT → Obsidian 当前打开的库 →
+库的定位（按优先级）：--vault → 环境变量 TASK_VAULT → Obsidian 当前打开的库 →
 库里只有一个库时直接用。多库并存会报错并列出候选，需要显式 --vault。
 
 install 选项：
-  --bin-dir <目录>      放 dada 命令的目录，默认 ~/.local/bin（或环境变量 DADA_BIN_DIR）
+  --bin-dir <目录>      放 task 命令的目录，默认 ~/.local/bin（或环境变量 TASK_BIN_DIR）
   --skill-dir <目录>    安装 skill 的目标目录，可重复；缺省装到已存在的
                         ~/.agents/skills、~/.dsh/skills、~/.claude/skills
   --link                技能文件用软链代替复制（改仓库里的 SKILL.md 即时生效）
@@ -129,7 +129,7 @@ function ensureBundle(force) {
     ENTRY, '--bundle', '--platform=node', '--format=esm',
     `--alias:obsidian=${MOCK}`, `--outfile=${DIST}`, '--log-level=warning',
   ], { cwd: REPO, stdio: 'inherit' });
-  if (r.status !== 0) throw new CliError('bundle_failed', '打包 dada-core 失败');
+  if (r.status !== 0) throw new CliError('bundle_failed', '打包 task-core 失败');
 }
 
 // ---------- 日期 ----------
@@ -184,7 +184,7 @@ function registryVaults() {
 }
 
 function resolveVault(flags) {
-  const explicit = flags.vault || process.env.DADA_VAULT;
+  const explicit = flags.vault || process.env.TASK_VAULT;
   if (explicit) {
     const v = path.resolve(String(explicit));
     if (!fs.existsSync(v)) throw new CliError('no_vault', `Obsidian 库不存在：${v}`);
@@ -198,7 +198,7 @@ function resolveVault(flags) {
   if (pool.length > 1) {
     throw new CliError('ambiguous_vault', '检测到多个 Obsidian 库，请用 --vault 指定', { vaults: pool });
   }
-  throw new CliError('no_vault', '未找到 Obsidian 库：用 --vault 指定，或设置环境变量 DADA_VAULT');
+  throw new CliError('no_vault', '未找到 Obsidian 库：用 --vault 指定，或设置环境变量 TASK_VAULT');
 }
 
 function readSettings(vault) {
@@ -247,7 +247,7 @@ async function resolveListKey(core, value) {
 // ---------- 命令：add / lists / groups ----------
 async function cmdAdd(core, { flags, pos }, out) {
   const summary = (pos.slice(1).join(' ') || flags.summary || '').trim();
-  if (!summary) throw new CliError('missing_summary', '缺少任务标题：dada add "标题"');
+  if (!summary) throw new CliError('missing_summary', '缺少任务标题：task add "标题"');
   core.boot(out.settings);
 
   const listKey = flags.list ? await resolveListKey(core, flags.list) : 'inbox';
@@ -355,9 +355,9 @@ async function cmdInstall({ flags }) {
   if (!fs.existsSync(SKILL_SRC)) throw new CliError('no_skill', `仓库里缺少技能文件：${SKILL_SRC}`);
   ensureBundle(true);
 
-  const binDir = path.resolve(String(flags['bin-dir'] || process.env.DADA_BIN_DIR || path.join(os.homedir(), '.local', 'bin')));
+  const binDir = path.resolve(String(flags['bin-dir'] || process.env.TASK_BIN_DIR || path.join(os.homedir(), '.local', 'bin')));
   fs.mkdirSync(binDir, { recursive: true });
-  const link = path.join(binDir, 'dada');
+  const link = path.join(binDir, 'task');
   const st = fs.lstatSync(link, { throwIfNoEntry: false });
   let binAction = 'created';
   if (st) {
@@ -402,7 +402,7 @@ async function main() {
   if (!cmd || cmd === 'help' || flags.help) return { ok: true, cmd: 'help', text: HELP };
 
   const vault = resolveVault(flags);
-  process.env.DADA_VAULT = vault; // mock 按此根目录读写
+  process.env.TASK_VAULT = vault; // mock 按此根目录读写
   ensureBundle(false);
   const core = await import(pathToFileURL(DIST).href);
   const out = { vault, settings: readSettings(vault) };

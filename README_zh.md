@@ -168,18 +168,18 @@ ln -s "$(pwd)/dada-todo-list" "你的库/.obsidian/plugins/dada-todo-list"
 
 ### 🤖 给 AI agent 用（CLI + skill）
 
-仓库自带命令行入口 `tools/dada.mjs` 和配套技能 `skills/task-data-todo/`，让 agent 按插件自己的语义创建任务
+仓库自带命令行入口 `tools/task.mjs` 和配套技能 `skills/task-data-todo/`，让 agent 按插件自己的语义创建任务
 （收件箱 / 清单 / `###` 分组 / 行内日期），不用手拼 Markdown，也不用读插件源码。CLI 不复制格式：
 它用 esbuild 把真实的 `api/tasks.js` 打包（`obsidian` 换成文件系统 mock），所以写出来的东西与插件内新建完全一致。
 
 ```bash
-node tools/dada.mjs install     # 一次性：装 dada 命令（默认 ~/.local/bin）并把 skill 装到已有的 agent 技能目录
-dada add "整理 Q4 预算表" --due tomorrow --json
-dada lists --json               # 清单名 / key / 未完成数
-dada groups --list "清单名"      # 该清单的 ### 分组
+node tools/task.mjs install     # 一次性：装 task 命令（默认 ~/.local/bin）并把 skill 装到已有的 agent 技能目录
+task add "整理 Q4 预算表" --due tomorrow --json
+task lists --json               # 清单名 / key / 未完成数
+task groups --list "清单名"      # 该清单的 ### 分组
 ```
 
-库按 `--vault` → 环境变量 `DADA_VAULT` → Obsidian 当前打开的库 自动定位；`--dry-run` 只演示不落盘；
+库按 `--vault` → 环境变量 `TASK_VAULT` → Obsidian 当前打开的库 自动定位；`--dry-run` 只演示不落盘；
 `--json` 给 agent 稳定可断言的结果。需要 Node 18+ 和一次 `npm install`（只为拿 vite 自带的 esbuild）。
 
 ## 📄 License

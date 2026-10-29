@@ -7,7 +7,7 @@
     "dev": "DADA_DEV=1 vite build --watch",
     "build": "vite build",
     "build:free": "vite build",
-    "build:cli": "node tools/dada.mjs build"
+    "build:cli": "node tools/task.mjs build"
   },
   "dependencies": {
     "i18next": "^23.16.8",

@@ -20,7 +20,7 @@ export function setDryRun(v) {
 /** 取出本次运行产生的写操作（{ op: 'create'|'modify'|'createFolder', path, content? }），并清空记录 */
 export function takeOps() { const out = ops; ops = []; return out; }
 
-const ROOT = () => process.env.DADA_VAULT;
+const ROOT = () => process.env.TASK_VAULT;
 const abs = (p) => path.join(ROOT(), String(p || '').replace(/^\/+/, ''));
 const readFile = (p) => (overlay.has(p) ? overlay.get(p) : fs.readFileSync(abs(p), 'utf8'));
 const fileExists = (p) => overlay.has(p) || fs.existsSync(abs(p));

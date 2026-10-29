@@ -3,40 +3,40 @@ name: task-data-todo
 description: 当用户要记待办、加任务、登记一件事、给事情排日期或时间，或说「记一下」「提醒我」「放进 todo」「加到清单」「帮我排个期」时调用；当新任务的归属（清单 / 分组）不确定、需要先查已有清单或分组时也调用。
 ---
 
-# 任务写入：dada CLI
+# 任务写入：task CLI
 
-用 `dada` 命令写任务。它内部就是插件真实的 `api/tasks.js`（esbuild + fs mock 打包），
+用 `task` 命令写任务。它内部就是插件真实的 `api/tasks.js`（esbuild + fs mock 打包），
 写出来的格式与在插件里手动新建完全一致，不需要读插件源码，也不需要自己拼 Markdown。
 
 ## 前置
 
 ```bash
-dada --help                 # 命令不存在？见「未安装时」
+task --help                 # 命令不存在？见「未安装时」
 ```
 
-- **未安装时**：在插件仓库目录下执行一次 `node tools/dada.mjs install`（会装好 `dada` 命令和本 skill），
-  重开 shell 后可用。安装前也可以直接在插件仓库里用 `node tools/dada.mjs <子命令>`。
+- **未安装时**：在插件仓库目录下执行一次 `node tools/task.mjs install`（会装好 `task` 命令和本 skill），
+  重开 shell 后可用。安装前也可以直接在插件仓库里用 `node tools/task.mjs <子命令>`。
 - **库的定位**：自动用 Obsidian 当前打开的库；同时开着多个库时加 `--vault <库根路径>`
-  （或环境变量 `DADA_VAULT`）。
+  （或环境变量 `TASK_VAULT`）。
 
 ## 命令
 
 ```bash
 # 收件箱（无日期、未分组）—— 拿不准时的默认动作
-dada add "整理 Q4 预算表" --json
+task add "整理 Q4 预算表" --json
 
 # 截止日期（行内 📅，不会新建日记文件）
-dada add "交周报" --due tomorrow --json
-dada add "交周报" --due 2026-11-03 --json
-dada add "评审会" --due 2026-11-03 --time 14:30 --json
+task add "交周报" --due tomorrow --json
+task add "交周报" --due 2026-11-03 --json
+task add "评审会" --due 2026-11-03 --time 14:30 --json
 
 # 放进清单的某个分组（先查名字）
-dada lists --json                       # 清单名 / key / 未完成数
-dada groups --list "产品改进"            # 该清单的 ### 分组
-dada add "补英文 README" --list "产品改进" --group "P0" --priority high --json
+task lists --json                       # 清单名 / key / 未完成数
+task groups --list "产品改进"            # 该清单的 ### 分组
+task add "补英文 README" --list "产品改进" --group "P0" --priority high --json
 
 # 只演示，不落盘
-dada add "演示" --dry-run
+task add "演示" --dry-run
 ```
 
 选项：`--due <YYYY-MM-DD|today|tomorrow|+Nd>`、`--time HH:MM`、`--list <清单名>`、
