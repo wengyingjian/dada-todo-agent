@@ -343,6 +343,29 @@ const backup = JSON.parse(await ev(`JSON.stringify({
 await P.install();
 await ev('window.__e2eErrors.length = 0');
 
+// 中途退出（Ctrl-C、未捕获异常）也要还原设置：否则用户真实设置会被测试值覆盖
+const RESTORE_JS = `(async () => {
+  try {
+    const p = window.app.plugins.plugins['dada-todo-agent'];
+    p.settings.journalFolder = ${J(backup.journalFolder)};
+    Object.assign(p.settings.project, ${J(backup.project)});
+    p.settings.projectIgnoredThreads = ${J(backup.projectIgnoredThreads || [])};
+    p.settings.menuHiddenViews = ${J(backup.menuHiddenViews || [])};
+    await p.saveSettings();
+  } catch (e) { /* 插件可能已被停用 */ }
+  try { await __e2e.rm(${J(CFG.base)}); } catch { /* 目录可能还没建 */ }
+  return true;
+})()`;
+let restoring = false;
+async function emergencyRestore(reason) {
+  if (restoring) return;
+  restoring = true;
+  console.error('\n中断（' + reason + '），正在还原插件设置与清理测试目录…');
+  try { await ev(RESTORE_JS); } catch (e) { console.error('还原失败，请手工把 projectsRoot 改回「任务」、journalFolder 改回「10-时间轴/日记」，并删除 __e2e/：', e.message); }
+}
+process.on('SIGINT', () => { emergencyRestore('SIGINT').finally(() => process.exit(130)); });
+process.on('uncaughtException', (e) => { console.error(e); emergencyRestore('uncaughtException').finally(() => process.exit(1)); });
+
 await P.rm(CFG.base);
 await P.mkdir(CFG.base);
 mkdirSync(CFG.cwd, { recursive: true });
