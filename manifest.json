@@ -1,10 +1,10 @@
 {
   "id": "dada-todo-agent",
   "name": "Dada 任务中心",
-  "version": "0.1.0",
+  "version": "0.13.0",
   "minAppVersion": "1.13.0",
-  "description": "项目任务中心：以文件夹为项目数据库，任务可委派给 T3 Code 并回写结果；保留原日/周/月/日程/清单视图。Fully local.",
-  "author": "wengyingjian",
+  "description": "以文件夹为项目数据库的任务中心：日/周/月/清单视图之外新增项目视图，任务可委派给 T3 Code，会话状态反向同步回任务行。基于 Dada Todo List。",
+  "author": "wyj",
   "authorUrl": "https://github.com/wengyingjian",
   "isDesktopOnly": true
 }

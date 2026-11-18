@@ -10,7 +10,7 @@ import {
   INBOX_KEY, CHILD_INDENT,
   parseTasks, toRecord, serializeBlock, serializeTaskLine,
   nodeFromTask, locateNode, collectLineNos, todayKey, parseGuid, msToTime, dateToMs, flattenTasks,
-  priorityRank, checklistNameError
+  priorityRank, splitSummary
 } from '../composables/tasks-logic.js';
 
 let plugin = null;
@@ -19,8 +19,20 @@ export function initTasksApi(p) { plugin = p; }
 // 自写标记：插件自身的写操作也会触发 vault / metadataCache 事件，
 // 视图层的「外部变更自动刷新」据此跳过自身引起的变更，避免无谓的重复加载。
 let lastSelfWriteAt = 0;
-function noteSelfWrite() { lastSelfWriteAt = Date.now(); }
+// 标签索引缓存（编辑弹窗智能提示，issue #22）：写路径统一经 noteSelfWrite()，
+// 故在此一并置空，下次 collectTags() 时全量重建，避免增量维护引入不一致
+let tagIndex = null;
+function noteSelfWrite() { lastSelfWriteAt = Date.now(); tagIndex = null; }
 export function isExternalChange() { return Date.now() - lastSelfWriteAt > 1200; }
+
+// 任务记录统一出口：⏳ 计划日期（scheduledAt）仅在设置「启用计划时间」开启时对外可见，
+// 关闭时置 null（各视图的 v-if 随之隐藏徽标）；行内 ⏳ 本身不受影响，仍解析并原样保留（issue #13）
+function recordOf(...args) {
+  const r = toRecord(...args);
+  const on = plugin && plugin.settings && plugin.settings.showScheduled === true;
+  if (!on) r.scheduledAt = null;
+  return r;
+}
 
 // 清单键前缀：键形如 `cl:<相对路径（不含 .md）>`，guid 形如 `cl:路径#行号`
 const CL_PREFIX = 'cl:';
@@ -31,7 +43,7 @@ const listNameOf = (k) => listRelOf(k).split('/').pop();
 
 // ---------- 数据位置解析 ----------
 
-const normFolder = (p) => String(p || '').trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^\/+|\/+$/g, '');
+const normFolder = (p) => String(p || '').replace(/^\/+|\/+$/g, '');
 
 // 取核心「日记 / Daily Notes」内部插件实例；非硬依赖，异常或缺失时返回 null。
 function legacyDailyNotesInstance() {
@@ -133,18 +145,6 @@ function checklistTags() {
   const s = plugin.settings && plugin.settings.checklistTags;
   const arr = Array.isArray(s) ? s.map((x) => String(x).trim()).filter(Boolean) : [];
   return arr.length ? arr : ['todoList'];
-}
-
-// 新建清单文件的存放文件夹（设置项 checklistFolder，默认「清单」；''/'/' = 库根）。
-// 只影响「新建」落点：已存在的清单仍按 checklistTags 全库识别，与目录无关。
-// 含 . / .. 段（越级）时返回 null，由调用方按「文件夹设置不可用」拒绝——否则拼出的 key
-// 会与真实文件路径不同源（taskFilePath 也会拒绝 ..），造出打不开的幽灵清单项。
-function checklistFolder() {
-  const raw = plugin.settings && plugin.settings.checklistFolder;
-  if (typeof raw !== 'string') return '清单';
-  const f = normFolder(raw);
-  if (f && f.split('/').some((seg) => seg === '.' || seg === '..')) return null;
-  return f;
 }
 
 // 收件箱文件不存在时创建（含 frontmatter），启动时调用
@@ -343,13 +343,7 @@ async function ensureFolder(pathWithoutFile) {
   for (const seg of pathWithoutFile.split('/')) {
     if (!seg) continue;
     cur = cur ? `${cur}/${seg}` : seg;
-    if (v.getAbstractFileByPath(cur)) continue;
-    try {
-      await v.createFolder(cur);
-    } catch (e) {
-      // 启动早期缓存未就绪时「已存在的文件夹」会被判成不存在，createFolder 抛 already exists：视为幂等成功
-      if (!/already exists/i.test(e && e.message || '')) throw e;
-    }
+    if (!v.getAbstractFileByPath(cur)) await v.createFolder(cur);
   }
 }
 
@@ -360,13 +354,8 @@ async function ensureTaskFile(dateKey, path) {
   if (v.getAbstractFileByPath(path)) return true;
   const tmpl = await dailyTemplateContent();
   await ensureFolder(path.split('/').slice(0, -1).join('/'));
-  try {
-    // 有模板则整份复制（frontmatter + 正文都生效）；无模板则退化为最小 frontmatter
-    await v.create(path, tmpl ? tmpl + '\n' : DAILY_HEAD);
-  } catch (e) {
-    // 启动早期缓存未就绪时，上面的「存在即返回」可能漏检，create 抛 already exists：幂等成功
-    if (!/already exists/i.test(e && e.message || '')) throw e;
-  }
+  // 有模板则整份复制（frontmatter + 正文都生效）；无模板则退化为最小 frontmatter
+  await v.create(path, tmpl ? tmpl + '\n' : DAILY_HEAD);
   return true;
 }
 
@@ -405,11 +394,12 @@ function checklistFileEntries() {
   if (!wanted.length) return [];
   const mc = plugin.app.metadataCache;
   const out = [];
-  // [project-view] 项目文件也带 todoList 标记（复用任务 CRUD），但不进清单视图 / 待办池
-  const projectsRoot = String((plugin.settings && plugin.settings.project && plugin.settings.project.projectsRoot) || '任务')
-    .trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  // [project-view] 项目数据库目录（默认「任务/」）里的 task-*.md 不进清单池：
+  // 这些文件由项目视图自己管理，混进清单会让清单/待办池出现整片项目任务
+  const projRoot = String((plugin.settings && plugin.settings.project && plugin.settings.project.projectsRoot) || '任务')
+    .replace(/^\/+|\/+$/g, '');
   for (const f of vault().getMarkdownFiles()) {
-    if (projectsRoot && (f.path === projectsRoot || f.path.startsWith(projectsRoot + '/'))) continue;
+    if (projRoot && (f.path === projRoot || f.path.indexOf(projRoot + '/') === 0)) continue;
     const cache = mc.getFileCache(f);
     const fm = cache && cache.frontmatter;
     if (!fm) continue;
@@ -432,67 +422,25 @@ async function listChecklists() {
   for (const e of checklistFileEntries()) {
     const doc = await readTasks(e.path, e.key);
     const all = flattenTasks(doc.roots);
-    // cancelled 一并给出：清单视图眼睛过滤时按「done + cancelled === total」判断「已无待办」，
-    // 只看 done 会漏掉「部分完成 + 部分取消」这类同样没有待办的清单
-    items.push({
-      key: e.key,
-      name: e.name,
-      total: all.length,
-      done: all.filter((n) => n.completed).length,
-      // 节点上的取消态是 cancelMark（- [-]）或 cancelled（❌ 日期串），两者独立，任一命中即取消
-      cancelled: all.filter((n) => n.cancelMark || n.cancelled).length
-    });
+    items.push({ key: e.key, name: e.name, total: all.length, done: all.filter((n) => n.completed).length });
   }
   items.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
   return res(200, { ok: true, count: items.length, items });
 }
 
-// 新建清单文件：只要名称。存放位置由 checklistFolder 决定（默认 清单/<名称>.md），
-// 正文只写清单标记 frontmatter（分组 ### 由用户后续自行维护）。
-// 校验全部在写文件之前：空名 / 非法名 / 文件夹设置不可用 → 400，重名 → 409（绝不覆盖用户笔记）。
-export async function createChecklist(name) {
-  const n = String(name == null ? '' : name).trim();
-  const nameErr = checklistNameError(n);
-  if (nameErr) return res(400, { ok: false, reason: nameErr });
-  const folder = checklistFolder();
-  if (folder == null) return res(400, { ok: false, reason: 'bad_folder' });
-  const rel = folder ? `${folder}/${n}` : n;
-  const path = `${rel}.md`;
-  const v = vault();
-  if (v.getAbstractFileByPath(path)) return res(409, { ok: false, reason: 'exists' });
-  // 库内已有同名清单（可能在别的目录）：侧栏只显示文件名，重名会变成两个看不出区别的条目，
-  // 建之前就挡住，并回传已存在文件的路径，让提示能说清是哪一份。
-  const same = checklistFileEntries().find((e) => e.name === n && e.path !== path);
-  if (same) return res(409, { ok: false, reason: 'exists_other', path: same.path });
-  // 清单标记取第一个即可（识别时任一命中，写一个足够）；含 YAML 特殊字符时加引号，避免被解析成非字符串
-  const tag = String(checklistTags()[0] || 'todoList');
-  const tagYaml = /^[A-Za-z0-9_\-/.]+$/.test(tag) ? tag : JSON.stringify(tag);
-  const head = `---\ntags:\n  - ${tagYaml}\n---\n\n`;
-  noteSelfWrite();
-  await ensureFolder(folder);
-  try {
-    await v.create(path, head);
-  } catch (e) {
-    // 并发 / 文件树缓存未就绪导致的 already exists：按「已存在」上报，不覆盖
-    if (/already exists/i.test(e && e.message || '')) return res(409, { ok: false, reason: 'exists' });
-    throw e;
-  }
-  const key = CL_PREFIX + rel;
-  return res(201, { ok: true, key, path, item: { key, name: n, total: 0, done: 0 } });
-}
-
-// 读取一个任务文件并按 ### 三级标题分组（清单与收件箱共用）。
-// 任务归属到其之前最近的一个 ### 标题；标题前的任务归入「未分组」（title = ''）。
-// 返回文件内全部任务（不过滤日期 / 完成态），过滤交由视图层按各自场景处理。
-async function readGrouped(path, key, name) {
-  const doc = await readTasks(path, key);
+// 读取单个清单，并按 ### 三级标题分组（清单文件支持用 ### 标题 作为分组分隔）。
+// 任务归属到其之前最近的一个 ### 标题；标题前的任务归入「未分组」。
+export async function loadChecklistGroups(listKey) {
+  const path = taskFilePath(listKey);
+  if (!path) return res(400, { ok: false, reason: 'bad_list' });
+  const doc = await readTasks(path, listKey);
   // 收集 ### 标题的行号与文字（仅三级标题，与用户约定一致）
   const headings = [];
   doc.lines.forEach((line, idx) => {
     const m = /^###\s+(.+?)\s*$/.exec(line);
     if (m) headings.push({ lineNo: idx, title: m[1].trim() });
   });
-  const records = flattenTasks(doc.roots).map((n) => toRecord(key, n));
+  const records = flattenTasks(doc.roots).map((n) => recordOf(listKey, n));
   const titled = headings.map((h) => ({ title: h.title, tasks: [] }));
   const ungrouped = [];
   for (const t of records) {
@@ -509,24 +457,7 @@ async function readGrouped(path, key, name) {
   if (ungrouped.length) groups.push(sortGroup({ title: '', tasks: ungrouped }));
   groups.push(...titled.map(sortGroup));
   const done = records.filter((t) => t.completed && !t.cancelled).length;
-  return { name, groups, total: records.length, done };
-}
-
-// 读取单个清单，并按 ### 三级标题分组（清单文件支持用 ### 标题 作为分组分隔）。
-export async function loadChecklistGroups(listKey) {
-  const path = taskFilePath(listKey);
-  if (!path) return res(400, { ok: false, reason: 'bad_list' });
-  const g = await readGrouped(path, listKey, listNameOf(listKey));
-  return res(200, Object.assign({ ok: true, key: listKey }, g));
-}
-
-// 收件箱按 ### 分组读取：与清单同一套分组规则，供待办池「独立事项」分组展示。
-// 「独立事项」原先只是聚合结果上的 filter（拿不到 ### 行号），故单独提供此读取入口。
-export async function loadInboxGroups() {
-  const path = inboxPath();
-  const name = String(path).split('/').pop().replace(/\.md$/i, '');
-  const g = await readGrouped(path, INBOX_KEY, name);
-  return res(200, Object.assign({ ok: true, key: INBOX_KEY }, g));
+  return res(200, { ok: true, key: listKey, name: listNameOf(listKey), groups, total: records.length, done });
 }
 async function listTasks(opts = {}) {
   let files;
@@ -551,7 +482,7 @@ async function listTasks(opts = {}) {
     for (const node of doc.roots) {
       if (f.aggregateOnly && !node.due) continue;
       // 带上所属文件，确保同日期多文件下 guid 唯一、后续操作能定位到正确文件
-      items.push(toRecord(f.key, node, { file: f.path }));
+      items.push(recordOf(f.key, node, { file: f.path }));
     }
   }
   return res(200, { ok: true, count: items.length, items });
@@ -569,6 +500,36 @@ export async function getDetail(guid) {
 }
 export const loadChecklists = () => listChecklists();
 
+// ---------- 全库标签索引（编辑弹窗智能提示，issue #22） ----------
+// 扫描全部任务源（日记 / 收件箱 / 清单，含清单内无 📅 的任务与缩进子任务——
+// 它们不进日历聚合，但标签同样算「用过」），统计每个标签的使用频次。
+// 注意：解析节点上没有 tags 字段，标签要从 summary 现场解析（splitSummary，与 toRecord 同源）。
+// 返回 [{ name, count }]，按频次倒序、同频次按字母序。
+export async function collectTags() {
+  if (tagIndex) return tagIndex;
+  const counts = new Map();
+  const bump = (node) => {
+    if (!node) return;
+    const tags = splitSummary(node.summary).tags;
+    if (Array.isArray(tags)) for (const g of tags) counts.set(g, (counts.get(g) || 0) + 1);
+    if (Array.isArray(node.children)) node.children.forEach(bump);
+  };
+  const files = [
+    ...listDailyFiles(),
+    { key: INBOX_KEY, path: taskFilePath(INBOX_KEY) },
+    ...checklistFileEntries(),
+  ];
+  for (const f of files) {
+    try {
+      const doc = await readTasks(f.path, f.key);
+      doc.roots.forEach(bump);
+    } catch (e) { /* 单个文件缺失 / 损坏不影响其余统计 */ }
+  }
+  tagIndex = [...counts.entries()].map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  return tagIndex;
+}
+
 // 列出某任务的子任务
 export async function listSubtasks(parentGuid) {
   const g = parseGuid(parentGuid);
@@ -578,18 +539,21 @@ export async function listSubtasks(parentGuid) {
   const doc = await readTasks(path, g.dateKey);
   const node = locateNode(doc.roots, { lineNo: g.lineNo });
   if (!node) return res(404, { ok: false, reason: 'not_found' });
-  const items = node.children.map((c) => toRecord(g.dateKey, c, { parentGuid, file: g.file }));
+  const items = node.children.map((c) => recordOf(g.dateKey, c, { parentGuid, file: g.file }));
   return res(200, { ok: true, count: items.length, items });
 }
 
 // ---------- 写 ----------
-// 追加到文件末尾（去掉尾部空行后补一个空行）
+// 追加到文件末尾：新任务块紧接上一个任务（不插入空行）；
+// 写回时在末尾补一个空行——即「最后一个任务下方有一个空行」，
+// 下次追加时会先去掉这个尾部空行再直接接上，因此任务之间不会积累空行
 function appendLines(lines, node, indentStr) {
   const out = lines.slice();
   while (out.length && !out[out.length - 1].trim()) out.pop();
-  if (out.length) out.push('');
   const lineNo = out.length;
   out.push(...serializeBlock(node, indentStr));
+  out.push('');
+  out.push('');
   return { out, lineNo };
 }
 
@@ -621,18 +585,17 @@ export async function createTask(task) {
   }
   const { out, lineNo } = appendLines(doc.lines, node, '');
   await writeTasks(path, doc.head, out);
-  return res(201, { ok: true, task: toRecord(dateKey, Object.assign({}, node, { lineNo }), { file: path }) });
+  return res(201, { ok: true, task: recordOf(dateKey, Object.assign({}, node, { lineNo }), { file: path }) });
 }
 
-// 在清单 / 收件箱指定分组的最后一行追加任务。
+// 在清单指定分组的最后一行追加任务。
 // groupTitle 为空串 → 未分组（追加到首个 ### 之前；无 ### 则文件末尾）；
 // 否则定位 ### groupTitle 标题，插入到下一个 ### 之前（无下一个 ### 则文件末尾）。
 export async function createChecklistTask(listKey, groupTitle, task) {
   noteSelfWrite();
   const t = task || {};
   if (!String(t.summary || '').trim()) return res(400, { ok: false, reason: 'missing_summary' });
-  // 收件箱与清单共用此入口：编辑弹窗的「归属」可以直接把新任务建到收件箱的指定分组
-  if (!isListKey(listKey) && listKey !== INBOX_KEY) return res(400, { ok: false, reason: 'bad_list' });
+  if (!isListKey(listKey)) return res(400, { ok: false, reason: 'bad_list' });
   const path = taskFilePath(listKey);
   if (!path) return res(400, { ok: false, reason: 'bad_list' });
   await ensureTaskFile(listKey, path);
@@ -662,82 +625,7 @@ export async function createChecklistTask(listKey, groupTitle, task) {
   lines.splice(insertAt, 0, newLine);
   await writeTasks(path, doc.head, lines);
   const created = Object.assign({}, node, { lineNo: insertAt });
-  return res(201, { ok: true, task: toRecord(listKey, created) });
-}
-
-// 把任务整块移动到目标文件（收件箱或清单）的指定 ### 分组末尾。
-// 默认（拖拽语义）跨文件时清空日期标记，落到「无日期待办」（与拖回待办池的行为一致）。
-// opts.keepDate=true 时跨文件保留日期（编辑弹窗改「归属」用）：日记任务的日期原本由文件名
-// 承载，会物化成行内 🛫/📅，否则搬进清单后会变成无日期任务。
-// 分组不存在时在写任何文件之前返回 404，避免源任务已被删而目标落空。
-export async function moveTaskToGroup(guid, targetKey, groupTitle, opts) {
-  noteSelfWrite();
-  const keepDate = !!(opts && opts.keepDate);
-  const g = parseGuid(guid);
-  if (!g) return res(400, { ok: false, reason: 'bad_guid' });
-  if (targetKey !== INBOX_KEY && !isListKey(targetKey)) return res(400, { ok: false, reason: 'bad_list' });
-  const srcPath = pathOf(g);
-  const dstPath = taskFilePath(targetKey);
-  if (!srcPath || !dstPath) return res(400, { ok: false, reason: 'bad_guid' });
-
-  const src = await readTasks(srcPath, g.dateKey);
-  const node = locateNode(src.roots, { lineNo: g.lineNo });
-  if (!node) return res(404, { ok: false, reason: 'not_found' });
-  const removed = new Set(collectLineNos(node));
-  const sameFile = srcPath === dstPath;
-
-  // 目标文件内容（同文件时用「已删源块」的结果，避免二次读取）
-  let dstHead, dstLines;
-  if (sameFile) {
-    dstHead = src.head;
-    dstLines = src.lines.filter((_, i) => !removed.has(i));
-  } else {
-    await ensureTaskFile(targetKey, dstPath);
-    const dst = await readTasks(dstPath, targetKey);
-    dstHead = dst.head;
-    dstLines = dst.lines.slice();
-  }
-
-  // 插入位置：与 createChecklistTask / moveChecklistTask 同规则
-  const headings = [];
-  dstLines.forEach((line, idx) => {
-    const m = /^###\s+(.+?)\s*$/.exec(line);
-    if (m) headings.push({ idx, title: m[1].trim() });
-  });
-  let insertAt;
-  if (!groupTitle) {
-    insertAt = headings.length ? headings[0].idx : dstLines.length;
-  } else {
-    const h = headings.find((x) => x.title === groupTitle);
-    if (!h) return res(404, { ok: false, reason: 'group_not_found' });
-    const next = headings.find((x) => x.idx > h.idx);
-    insertAt = next ? next.idx : dstLines.length;
-  }
-  // 目标位置前若只有空行，回退到最后一个非空行之后：避免任务与同组内容被空行隔开
-  while (insertAt > 0 && !dstLines[insertAt - 1].trim()) insertAt--;
-
-  if (!sameFile) {
-    const srcIsDated = !(g.dateKey === INBOX_KEY || isListKey(g.dateKey));
-    if (keepDate) {
-      // 日记 → 收件箱/清单：把文件名里隐含的日期物化为行内标记，保住「哪天」这个信息
-      if (srcIsDated) {
-        if (node.due) { if (!node.start) node.start = g.dateKey; } // 跨日期：补上开始日
-        else node.due = g.dateKey;                                  // 单日：写成 📅
-      }
-    } else {
-      // 拖拽语义：跨文件即落到「无日期待办」
-      node.due = '';
-      node.start = '';
-      node.time = '';
-      node.timeEnd = '';
-    }
-  }
-
-  dstLines.splice(insertAt, 0, ...serializeBlock(node, node.indentStr || ''));
-  if (!sameFile) await writeTasks(srcPath, src.head, src.lines.filter((_, i) => !removed.has(i)));
-  await writeTasks(dstPath, dstHead, dstLines);
-  // 带上 file：编辑弹窗移动后 chip /「打开源文件」按新路径定位
-  return res(200, { ok: true, task: toRecord(targetKey, Object.assign({}, node, { lineNo: insertAt }), { file: dstPath }) });
+  return res(201, { ok: true, task: recordOf(listKey, created) });
 }
 
 // 将清单内任务移动到另一个分组（同文件内移动整块：删旧块 + 插入到目标分组末尾）。
@@ -776,7 +664,7 @@ export async function moveChecklistTask(listKey, guid, targetGroupTitle) {
 
   keep.splice(insertAt, 0, ...serializeBlock(node, node.indentStr));
   await writeTasks(path, doc.head, keep);
-  return res(200, { ok: true, task: toRecord(listKey, node) });
+  return res(200, { ok: true, task: recordOf(listKey, node) });
 }
 
 // 新建子任务：插入到父任务块之后，缩进一级
@@ -800,7 +688,7 @@ export async function createSubtask(parentGuid, task) {
   lines.splice(insertAt, 0, serializeTaskLine(child, child.indentStr));
   await writeTasks(path, doc.head, lines);
   const created = Object.assign({}, child, { lineNo: insertAt });
-  return res(201, { ok: true, task: toRecord(g.dateKey, created, { parentGuid, file: path }) });
+  return res(201, { ok: true, task: recordOf(g.dateKey, created, { parentGuid, file: path }) });
 }
 
 // 修改任务（标题/描述/完成态/日期）。日期跨文件时移动整块。
@@ -844,6 +732,12 @@ export async function updateTask(guid, patch) {
       node.cancelMark = false;
       node.cancelled = '';
     }
+  }
+
+  // 计划日期（⏳）编辑：仅当传入 scheduledDate 字段时改写（未传 = 保持不动，issue #13）；
+  // 清空 = 传空串，行内 ⏳ 一并移除
+  if (Object.prototype.hasOwnProperty.call(p, 'scheduledDate')) {
+    node.scheduled = String(p.scheduledDate || '').trim();
   }
 
   let targetKey = g.dateKey;
@@ -891,7 +785,7 @@ export async function updateTask(guid, patch) {
   if (targetKey === g.dateKey) {
     keep.splice(node.lineNo, 0, ...serializeBlock(node, node.indentStr));
     await writeTasks(path, doc.head, keep);
-    return res(200, { ok: true, task: toRecord(g.dateKey, node, { file: path }) });
+    return res(200, { ok: true, task: recordOf(g.dateKey, node, { file: path }) });
   }
 
   // 跨文件移动：先写回源文件，再追加到目标文件末尾
@@ -905,7 +799,7 @@ export async function updateTask(guid, patch) {
   const dst = await readTasks(dstPath, targetKey);
   const { out, lineNo } = appendLines(dst.lines, node, '');
   await writeTasks(dstPath, dst.head, out);
-  return res(200, { ok: true, task: toRecord(targetKey, Object.assign({}, node, { lineNo }), { file: dstPath }) });
+  return res(200, { ok: true, task: recordOf(targetKey, Object.assign({}, node, { lineNo }), { file: dstPath }) });
 }
 
 // 删除任务（连同其描述行与子任务）
@@ -939,7 +833,7 @@ export async function toggleTask(guid, done) {
   const lines = doc.lines.slice();
   lines.splice(node.lineNo, 1, serializeTaskLine(node, node.indentStr));
   await writeTasks(path, doc.head, lines);
-  return res(200, { ok: true, task: toRecord(g.dateKey, node, { file: path }) });
+  return res(200, { ok: true, task: recordOf(g.dateKey, node, { file: path }) });
 }
 
 // 设定任务状态：status ∈ 'todo' | 'done' | 'cancelled'（右键菜单用）
@@ -971,5 +865,5 @@ export async function setChecklistStatus(guid, status) {
   const lines = doc.lines.slice();
   lines.splice(node.lineNo, 1, serializeTaskLine(node, node.indentStr));
   await writeTasks(path, doc.head, lines);
-  return res(200, { ok: true, task: toRecord(g.dateKey, node, { file: path }) });
+  return res(200, { ok: true, task: recordOf(g.dateKey, node, { file: path }) });
 }

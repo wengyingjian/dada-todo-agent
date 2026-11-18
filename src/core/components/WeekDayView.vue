@@ -8,6 +8,7 @@
         :now-top="nowTop"
         :axis-start="axisStartMin"
         :axis-end="axisEndMin"
+        :snap="snapMinutes"
         :drag-over-key="dragOverKey"
         :drag-guid="dragGuid"
         :helpers="tlHelpers"
@@ -38,10 +39,11 @@
 import TaskTimeline from './TaskTimeline.vue';
 import TodoSidePanel from './TodoSidePanel.vue';
 import { Tasks } from '../composables/useTasks.js';
+import { handleInlineLinkClick } from '../utils/openWikilink.js';
 import { openCtxMenu } from '../composables/useTaskCtxMenu.js';
 import {
   colorOf, itemColor, lunarDayText, lunarTagText, holidayOf,
-  statusIcon, timeText, richSummaryNoTags, plainInline, weekdayShort, spansDays
+  statusIcon, timeText, scheduledText, richSummaryNoTags, plainInline, weekdayShort, spansDays
 } from '../composables/tasks-logic.js';
 
 const pad = (n) => (n < 10 ? '0' + n : '' + n);
@@ -88,6 +90,12 @@ export default {
     },
     // 时间轴每小时像素高：窗口宽度 >700 → 48，否则（≤700）→ 60
     hourH() { return this.winW > 700 ? 48 : 60; },
+    // 时间轴吸附粒度（分钟）：来自设置 snapMinutes（5/10/15/30，默认 30），替换原硬编码 30
+    snapMinutes() {
+      const st = this.plugin && this.plugin.settings;
+      const v = Number(st && st.snapMinutes);
+      return [5, 10, 15, 30].includes(v) ? v : 30;
+    },
     // 时间轴显示窗口起始小时（整点，0–23），来自设置
     tlStartHour() {
       const s = this.plugin && this.plugin.settings;
@@ -150,6 +158,8 @@ export default {
         statusIcon: (t) => statusIcon(t),
         richSummaryNoTags: (t) => richSummaryNoTags(t),
         timeText: (t) => timeText(t),
+        // ⏳ 计划日期（scheduled）展示文本，仅解析展示（issue #13）
+        scheduledText: (t) => scheduledText(t),
         dragHint: (t) => s.dragHint(t),
         dropInfo: (key) => s.dropInfo(key),
         richClick: (e) => s.richClick(e)
@@ -322,7 +332,7 @@ export default {
     dropInfo(key) {
       if (!this.dragTask || this.dragOverKey !== key || this.dropY < 0) return null;
       let min = this.minForY(this.dropY);
-      min = Math.max(this.axisStartMin, Math.min(this.axisEndMin - 1, Math.round(min / 30) * 30)); // 整点 / 半点，限制在窗口内
+      min = Math.max(this.axisStartMin, Math.min(this.axisEndMin - 1, Math.round(min / this.snapMinutes) * this.snapMinutes)); // 按设置吸附，限制在窗口内
       const hh = Math.floor(min / 60), mm = min % 60;
       const dur = this.dragDuration();
       let endMin = min + dur;
@@ -365,10 +375,10 @@ export default {
         y = e.clientY - rect.top;
       }
       let min = this.minForY(y);
-      min = Math.max(this.axisStartMin, Math.min(this.axisEndMin - 1, Math.round(min / 30) * 30)); // 吸附到整点 / 半点，限制在窗口内
+      min = Math.max(this.axisStartMin, Math.min(this.axisEndMin - 1, Math.round(min / this.snapMinutes) * this.snapMinutes)); // 按设置吸附，限制在窗口内
       const hh = Math.floor(min / 60), mm = min % 60;
       const dueAt = new Date(dayKey + 'T' + pad(hh) + ':' + pad(mm) + ':00').getTime();
-      const payload = { summary: t.summary, description: t.description, dueAt, dueAllDay: false };
+      const payload = { summary: t.summary, description: t.description, priority: t.priority, dueAt, dueAllDay: false };
       const dur = this.dragDuration(t);
       if (dur > 0) {
         let endMin = min + dur;
@@ -464,6 +474,7 @@ export default {
       const payload = {
         summary: t.summary,
         description: t.description,
+        priority: t.priority,
         startAt: isSpan ? base : undefined,
         dueAt: isSpan ? base + Math.max(0, Math.round((Number(t.dueAt) - Number(t.startAt)) / day)) * day : base,
         dueAllDay: true
@@ -480,9 +491,9 @@ export default {
     dragHint(t) {
       return this.$t('app.dragHintFull', { title: plainInline(t.summary) });
     },
-    // v-html 内的链接点击：阻止冒泡，避免同时触发所在行的「打开编辑器」
+    // v-html 内的链接点击：拦截 [[双链]] 跳转，其余 <a> 仅阻止冒泡（保留默认跳转）
     richClick(e) {
-      if (e.target && e.target.tagName === 'A') e.stopPropagation();
+      handleInlineLinkClick(e, this.plugin);
     }
   }
 };

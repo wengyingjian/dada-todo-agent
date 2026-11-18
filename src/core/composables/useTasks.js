@@ -3,9 +3,9 @@
 import { t } from '../i18n/index.js';
 import {
   loadAll, loadChecklists, loadByList, loadByDate, getDetail,
-  loadChecklistGroups, loadInboxGroups, createChecklist,
+  loadChecklistGroups, collectTags,
   createTask, createChecklistTask, updateTask, deleteTask, toggleTask, setChecklistStatus, createSubtask, listSubtasks,
-  moveChecklistTask, moveTaskToGroup
+  moveChecklistTask
 } from '../api/tasks.js';
 
 // ---------- 纯函数 ----------
@@ -46,9 +46,6 @@ const api = {
   async loadChecklists() { return (await unwrap(loadChecklists())).items || []; },
   async loadByList(listKey) { return (await unwrap(loadByList(listKey))).items || []; },
   async loadChecklistGroups(listKey) { return await unwrap(loadChecklistGroups(listKey)); },
-  async loadInboxGroups() { return await unwrap(loadInboxGroups()); },
-  // 新建清单（只要名称）：返回 { key:'cl:相对路径', name, total:0, done:0 }，形状与 loadChecklists 的项一致
-  async createChecklist(name) { return (await unwrap(createChecklist(name))).item; },
   async loadByDate(dateKey) { return (await unwrap(loadByDate(dateKey))).items || []; },
   async getDetail(guid) {
     const items = await this.loadByDate(String(guid || '').split('#')[0]);
@@ -65,11 +62,8 @@ const api = {
   async listSubtasks(parentGuid) { return (await unwrap(listSubtasks(parentGuid))).items || []; },
   async createSubtask(parentGuid, task) { return (await unwrap(createSubtask(parentGuid, task))).task; },
   async moveChecklistTask(listKey, guid, targetGroupTitle) { return await unwrap(moveChecklistTask(listKey, guid, targetGroupTitle)); },
-  // 移动到指定文件的分组（收件箱 / 清单通用）。opts.keepDate=true 时跨文件保留日期
-  // （编辑弹窗改「归属」用）；不传则维持拖拽语义：跨文件落到无日期待办。
-  async moveTaskToGroup(guid, targetKey, targetGroupTitle, opts) {
-    return await unwrap(moveTaskToGroup(guid, targetKey, targetGroupTitle, opts));
-  }
+  // 全库历史标签（按频次倒序）：编辑弹窗添加标签时的智能提示数据源（issue #22）
+  async collectTags() { return await collectTags(); }
 };
 
 // 聚合命名空间导出，供组件以 Tasks.xxx 调用

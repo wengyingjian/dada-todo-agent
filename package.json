@@ -1,6 +1,6 @@
 {
-  "name": "dada-todo-agent",
-  "version": "0.1.0",
+  "name": "obsidian-dada-todo-agent",
+  "version": "0.13.0",
   "private": true,
   "type": "module",
   "scripts": {

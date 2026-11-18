@@ -292,6 +292,24 @@ function inlineRe() {
   return /\[([^\]]*)\]\(([^)\s]+)\)|(^|[\s(（])#([\p{L}\p{N}_\-/]+)/gu;
 }
 
+// 行内 Markdown 正则（含 wikilink）：wikilink [[...]] 优先，其次 md 链接，其次 #标签。
+// 独立工厂：renderInlineHtml 用它解析展示层，不影响 inlineRe()（编辑器的标题字段提取）。
+function inlineReWithWikilinks() {
+  return /\[\[([^\[\]]+)\]\]|\[([^\]]*)\]\(([^)\s]+)\)|(^|[\s(（])#([\p{L}\p{N}_\-/]+)/gu;
+}
+
+// 解析 [[目标#标题|别名]] → { target, display }
+//   target：供 openLinkText / 页面预览跳转（可含 #标题、/子路径、^块引用）
+//   display：展示文字——别名优先；无别名且带 # 时取标题段；否则取目标名（与 Obsidian 一致）
+function parseWikilink(inner) {
+  let target = inner, alias = '';
+  const bar = inner.indexOf('|');
+  if (bar >= 0) { target = inner.slice(0, bar); alias = inner.slice(bar + 1); }
+  if (alias) return { target, display: alias };
+  const hash = target.indexOf('#');
+  return { target, display: hash >= 0 ? target.slice(hash + 1) : target };
+}
+
 // 提取标题中的标签与链接（结构化字段，便于筛选/展示），仅模块内部使用
 function parseInline(text) {
   const src = String(text == null ? '' : text);
@@ -312,21 +330,35 @@ function parseInline(text) {
 export function renderInlineHtml(text, opts = {}) {
   const withTags = opts.tags !== false;
   const src = stripMute(text); // 🔕 为提醒关闭标记，不在任何展示位出现
-  const re = inlineRe();
+  // 行内解析：wikilink [[...]] 优先；其次 markdown 链接 [text](url)；其次 #标签。
+  // 注意：用独立工厂 inlineReWithWikilinks()，不改动共享的 inlineRe()（它供 parseInline/splitSummary
+  // 提取标题字段，改动会影响编辑器里 wikilink 的还原逻辑），wikilink 仅在展示层解析为可点击链接。
+  const re = inlineReWithWikilinks();
   let out = '';
   let last = 0;
   let m;
   while ((m = re.exec(src)) !== null) {
     out += escapeHtml(src.slice(last, m.index));
     if (m[1] !== undefined) {
-      const href = safeHref(m[2]);
-      const label = m[1] || m[2];
+      // [[目标#标题|别名]] → 可点击跳转的 Obsidian 双链；data-link 存 target 供 openLinkText / 页面预览
+      const { target, display } = parseWikilink(m[1]);
+      out += '<a class="tk-wikilink" data-link="' + escapeHtml(target) + '" href="#" rel="noopener">'
+        + escapeHtml(display) + '</a>';
+    } else if (m[2] !== undefined) {
+      const href = safeHref(m[3]);
+      const label = m[2] || m[3];
       out += href
         ? '<a class="tk-inline-link" href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(label) + '</a>'
         : escapeHtml(m[0]);
     } else {
-      out += escapeHtml(m[3]); // 保留前置空白，避免与前后文字粘连
-      if (withTags) out += '<span class="tk-inline-tag">#' + escapeHtml(m[4]) + '</span>';
+      out += escapeHtml(m[4]); // 保留前置空白，避免与前后文字粘连
+      if (withTags) {
+        const tag = m[5];
+        const c = tagColors[tag];
+        // 标签色胶囊（issue #8）：命中配置 → 浅底（与任务块同透明度）+ 标题同色文字
+        const style = c ? ' style="background:' + withAlpha(c, 0.28) + ';color:var(--ink)"' : '';
+        out += '<span class="tk-inline-tag"' + style + '>#' + escapeHtml(tag) + '</span>';
+      }
     }
     last = m.index + m[0].length;
     if (m[0] === '') re.lastIndex++;
@@ -383,19 +415,6 @@ export function isImeKey(e) {
   return !!e && (e.isComposing === true || e.keyCode === 229);
 }
 
-// 新建清单的名称校验（弹窗与数据层共用同一份规则，避免两处正则漂移）。
-// 合法返回 ''，否则返回原因码：'missing_name'（空）| 'bad_name'（文件名不可用）。
-// 规则：非空、不含路径分隔符与 Windows 非法字符 / 控制字符、非 Windows 保留名、不以点开头或结尾、长度上限。
-export function checklistNameError(name) {
-  const n = String(name == null ? '' : name).trim();
-  if (!n) return 'missing_name';
-  if (/[\\/:*?"<>|\x00-\x1f]/.test(n)) return 'bad_name';
-  if (n.startsWith('.') || n.endsWith('.')) return 'bad_name';
-  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i.test(n)) return 'bad_name';
-  if (n.length > 120) return 'bad_name';
-  return '';
-}
-
 // 标题 → 纯文本（用于 tooltip 等场景：链接只留文字）
 export function plainInline(text) {
   return stripMute(String(text == null ? '' : text))
@@ -410,6 +429,8 @@ export function toRecord(dateKey, node, opts = {}) {
   //   - 每日笔记文件名表示「开始日」，📅 表示结束日（结束 > 开始时写入），🛫 可覆盖开始日。
   const isDatedFile = !(dateKey === INBOX_KEY || String(dateKey || '').indexOf('cl:') === 0);
   const fileMs = dateToMs(dateKey, node.time || '00:00');
+  // ⏳（scheduled，计划日期）：仅解析进记录供展示，不参与排期（issue #13）
+  const scheduledMs = node.scheduled ? dateToMs(node.scheduled, node.time || '00:00') : null;
   let startAt = null;
   let dueAt = null;
   if (!isDatedFile) {
@@ -438,6 +459,7 @@ export function toRecord(dateKey, node, opts = {}) {
     completedAt: completed && node.done ? dateToMs(node.done) : null,
     dueAt,
     startAt,
+    scheduledAt: scheduledMs,
     dueAllDay: !node.time,
     dueEndAt: (dueAt != null && node.timeEnd) ? dateToMs(todayKey(dueAt), node.timeEnd) : null,
     subtaskCount: (node.children || []).length,
@@ -507,7 +529,9 @@ export function nodeFromTask(task, dateKey, opts = {}) {
     summary: String(t.summary || '').trim(),
     time,
     timeEnd,
-    created: '', start: '', scheduled: '', due: '', cancelled: '',
+    created: '', start: '', due: '', cancelled: '',
+    // ⏳ 计划日期（YYYY-MM-DD）：来自编辑弹窗的 scheduledDate 字段（issue #13）
+    scheduled: String(t.scheduledDate || '').trim(),
     priority: t.priority || '',
     recurrence: '',
     done: (t.completed && opts.addDoneDate !== false) ? todayKey() : ''
@@ -576,6 +600,12 @@ export function timeText(task) {
   return s;
 }
 
+// ⏳ 计划日期（scheduled）展示文本，如 "⏳ 2026-12-11"；仅解析展示，不参与排期（issue #13）
+export function scheduledText(task) {
+  if (!task || !task.scheduledAt) return '';
+  return '⏳ ' + todayKey(task.scheduledAt);
+}
+
 // 任务状态图标（Line Awesome 圆形勾选 / 取消减号）
 export function statusIcon(t) {
   if (t && t.cancelled) return 'la la-minus-circle';
@@ -640,7 +670,7 @@ export const JELLY_COLORS = [
   { bg: 'rgba(94, 234, 212, .38)', fg: '#10b3a3' }   // 湖绿
 ];
 
-// 春樱：生机勃勃的花开——樱粉、桃红、玫瑰、海棠、珊瑚橘，点缀嫩芽绿
+// 春樱：生机勃勃的花开——樱粉、桃红、玫瑰、海棠、珊瑚橘、藕荷，统一为粉红暖调（去掉绿点点缀）
 export const SPRING_COLORS = [
   { bg: 'rgba(255, 192, 203, .30)', fg: '#d4698a' }, // 樱粉
   { bg: 'rgba(255, 161, 178, .32)', fg: '#e8506f' }, // 桃红
@@ -648,20 +678,20 @@ export const SPRING_COLORS = [
   { bg: 'rgba(255, 178, 150, .32)', fg: '#e0633a' }, // 珊瑚橘（花蕊暖意）
   { bg: 'rgba(236, 130, 150, .30)', fg: '#c0395a' }, // 海棠红
   { bg: 'rgba(214, 170, 200, .30)', fg: '#9b4d7a' }, // 藕荷
-  { bg: 'rgba(167, 214, 146, .30)', fg: '#4e8a3a' }, // 嫩芽绿（生机）
-  { bg: 'rgba(190, 220, 160, .30)', fg: '#5a8f3c' }  // 草绿
+  { bg: 'rgba(255, 205, 215, .30)', fg: '#e07a98' }, // 浅粉（樱吹雪）
+  { bg: 'rgba(240, 180, 200, .30)', fg: '#c85a82' }  // 芍药粉
 ];
 
-// 夏木：绿树成荫——嫩叶绿、草绿、荷绿、深树绿、竹绿，配荷塘青碧与海蓝天
+// 夏木：绿树成荫——嫩叶绿、草绿、荷绿、深树绿、竹绿，收尾以荷塘柔绿，色域更统一（避免绿→蓝跳变）
 export const SUMMER_COLORS = [
   { bg: 'rgba(150, 210, 150, .32)', fg: '#3a9a4a' }, // 嫩叶绿
   { bg: 'rgba(120, 200, 130, .34)', fg: '#1f8f4e' }, // 草绿
   { bg: 'rgba(80, 180, 110, .34)', fg: '#167a3e' },  // 荷绿
   { bg: 'rgba(60, 160, 90, .34)', fg: '#126b34' },   // 深树绿
   { bg: 'rgba(160, 220, 120, .32)', fg: '#4e9a2e' }, // 竹绿
-  { bg: 'rgba(40, 180, 170, .32)', fg: '#0a7d72' },  // 湖青（荷塘）
-  { bg: 'rgba(90, 200, 200, .32)', fg: '#0f8f8a' },  // 青碧（水光）
-  { bg: 'rgba(56, 182, 255, .30)', fg: '#0a6fc0' }   // 海蓝（天）
+  { bg: 'rgba(110, 200, 180, .32)', fg: '#128a76' }, // 湖绿（荷塘，柔）
+  { bg: 'rgba(90, 190, 175, .32)', fg: '#0f8070' },  // 青翠（水光，柔）
+  { bg: 'rgba(70, 170, 160, .32)', fg: '#0d7068' }   // 苍绿（收尾，不跳蓝）
 ];
 
 // 秋枫：丰收与枫红——丰收金、麦黄、琥珀、枫橘、枫红、深枫红，少量栗与橄榄
@@ -676,16 +706,17 @@ export const AUTUMN_COLORS = [
   { bg: 'rgba(170, 170, 100, .30)', fg: '#6b6b2f' }  // 橄榄（少量）
 ];
 
-// 冬雪：落雪清寒——霜白、雾白、雪蓝、淡冰蓝、冰蓝、银灰、青霜，少量松雪青
+// 冬雪：落雪清寒——霜蓝、雾蓝、雪蓝、冰蓝、深冰蓝、银蓝、青霜、松雪青；
+// 整体加深冷蓝并略提透明度，避免浅色 Obsidian 主题下偏白、色块几乎不可见
 export const WINTER_COLORS = [
-  { bg: 'rgba(225, 235, 245, .30)', fg: '#5a7390' }, // 霜白
-  { bg: 'rgba(215, 225, 235, .30)', fg: '#6a8299' }, // 雾白
-  { bg: 'rgba(200, 220, 240, .28)', fg: '#4a6a8f' }, // 雪蓝
-  { bg: 'rgba(170, 200, 220, .28)', fg: '#3f6488' }, // 淡冰蓝
-  { bg: 'rgba(160, 195, 230, .28)', fg: '#3d6fa6' }, // 冰蓝
-  { bg: 'rgba(190, 205, 220, .28)', fg: '#586a78' }, // 银灰
-  { bg: 'rgba(205, 215, 225, .28)', fg: '#4f6275' }, // 青霜
-  { bg: 'rgba(150, 185, 205, .28)', fg: '#346066' }  // 松雪青（少量）
+  { bg: 'rgba(190, 215, 240, .34)', fg: '#3d6f9e' }, // 霜蓝
+  { bg: 'rgba(170, 200, 228, .34)', fg: '#2f6690' }, // 雾蓝
+  { bg: 'rgba(150, 192, 228, .34)', fg: '#2a6190' }, // 雪蓝
+  { bg: 'rgba(135, 180, 222, .34)', fg: '#245a89' }, // 冰蓝
+  { bg: 'rgba(120, 168, 214, .34)', fg: '#1f5482' }, // 深冰蓝
+  { bg: 'rgba(185, 198, 218, .32)', fg: '#46627e' }, // 银蓝
+  { bg: 'rgba(160, 200, 210, .32)', fg: '#2f6e76' }, // 青霜
+  { bg: 'rgba(140, 182, 205, .32)', fg: '#285f6c' }  // 松雪青
 ];
 
 // 配色方案注册表（设置项 colorScheme 的取值），基础方案如下。
@@ -725,6 +756,32 @@ export function setColorScheme(name) {
   activeColorScheme = COLOR_SCHEMES[name] ? name : 'default';
 }
 
+// 标签颜色映射（issue #8）：由 main.js 在设置加载 / 变更时注入；键 = 标签名，值 = CSS 颜色。
+// 命中标签的任务块用该颜色作整块背景，文字色等其余属性维持默认（不额外调整）
+let tagColors = {};
+export function setTagColors(m) {
+  tagColors = (m && typeof m === 'object' && !Array.isArray(m)) ? m : {};
+}
+
+// 合法标签色的统一校验：仅接受 6 位 hex（取色器与映射值都该是这个形态）
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+// 校验并规整标签色：合法 6 位 hex 原样返回，否则空串
+export function validHex(c) {
+  const s = String(c || '');
+  return HEX_COLOR_RE.test(s) ? s : '';
+}
+
+// 标签已配置合法颜色时返回 #hex，否则空串（读模块级注入的映射，供弹窗 / 设置页等非响应式场景）
+export function tagColorOf(name) {
+  return validHex(tagColors[name]);
+}
+
+// 一个映射里所有合法的自定义色（去重）：取色弹窗的「已用颜色」色板
+export function usedTagColors(map) {
+  return [...new Set(Object.values(map || {}).filter((c) => HEX_COLOR_RE.test(String(c || ''))))];
+}
+
 // 每周起始日：0 = 周日 … 6 = 周六。由 main.js 在加载设置、以及设置变更时调用 setWeekStart 更新。
 // 周视图 / 月视图 / 日历格据此重排首列与周范围；视图在设置变更后通过 reloadOpenViews() 重载。
 let weekStartDay = 0;
@@ -741,8 +798,40 @@ function isDarkMode() {
   return typeof document !== 'undefined' && document.body && document.body.classList.contains('theme-dark');
 }
 
-// 时间轴任务块配色：按标题哈希取色（浅底深字）
+// 标签胶囊配色（列表视图 .tk-tag 等独立胶囊）：命中 tagColors → 浅底（与任务块同透明度）+
+// 标题同色文字；未命中返回 null（走默认胶囊样式）
+export function tagChipStyle(name) {
+  const c = tagColors[name];
+  return c ? { background: withAlpha(c, 0.28), color: 'var(--ink)' } : null;
+}
+
+// hex 颜色 → 带透明度的 rgba：标签色与配色方案的浅底观感保持一致（透明度对齐默认色卡的 .28）。
+// 非 hex（如已是 rgba 的串）原样返回
+export function withAlpha(color, a) {
+  const s = String(color || '').trim();
+  let m = /^#([0-9a-f]{6})$/i.exec(s);
+  if (m) {
+    const n = parseInt(m[1], 16);
+    return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+  }
+  m = /^#([0-9a-f]{3})$/i.exec(s);
+  if (m) {
+    const [r, g, b] = m[1].split('');
+    return 'rgba(' + parseInt(r + r, 16) + ',' + parseInt(g + g, 16) + ',' + parseInt(b + b, 16) + ',' + a + ')';
+  }
+  return s;
+}
+
+// 时间轴任务块配色：标签颜色优先（issue #8），未命中配置的标签按标题哈希取色（浅底深字）
 export function colorOf(t, scheme) {
+  // 标签优先：任务标签中第一个命中 tagColors 配置的决定整块背景色（叠加默认透明度，
+  // 与色卡浅底观感一致）；fg = 实色，供日程卡片左侧色条（--ag-bar）使用。
+  // 文字色不受影响——itemColor 仅在方案声明 useFg / 色卡标记 dark 时才把 fg 用作文字色
+  const tags = t && Array.isArray(t.tags) ? t.tags : [];
+  for (const g of tags) {
+    const c = tagColors[g];
+    if (c) return { bg: withAlpha(c, 0.28), fg: c };
+  }
   const arr = COLOR_SCHEMES[scheme] || COLOR_SCHEMES[activeColorScheme];
   const s = String((t && t.summary) || '');
   let h = 0;

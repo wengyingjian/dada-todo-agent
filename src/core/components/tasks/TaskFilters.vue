@@ -12,16 +12,25 @@
         <button class="tk-filter-item tk-filter-parent" type="button"
                 :class="{ on: tagFilter === g.tag }" @click="$emit('toggle-tag', g.tag)">
           <i class="la" :class="tagFilter === g.tag ? 'la-folder-open' : 'la-folder'"></i>
-          <span>{{ g.label }}</span><span class="cnt">{{ g.n }}</span>
+          <span>{{ g.label }}</span>
+          <span class="tk-tagdot" :class="{ empty: !hexOf(g.tag) }" :style="hexOf(g.tag) ? { background: hexOf(g.tag) } : null" :title="$t('app.tagColorTip')"
+                @click.stop="$emit('edit-tag-color', g.tag)"></span>
+          <span class="cnt">{{ g.n }}</span>
         </button>
         <button v-for="c in g.items" :key="c.tag" class="tk-filter-item tk-filter-child" type="button"
                 :class="{ on: tagFilter === c.tag }" @click="$emit('toggle-tag', c.tag)">
-          <span>{{ c.label }}</span><span class="cnt">{{ c.n }}</span>
+          <span>{{ c.label }}</span>
+          <span class="tk-tagdot" :class="{ empty: !hexOf(c.tag) }" :style="hexOf(c.tag) ? { background: hexOf(c.tag) } : null" :title="$t('app.tagColorTip')"
+                @click.stop="$emit('edit-tag-color', c.tag)"></span>
+          <span class="cnt">{{ c.n }}</span>
         </button>
       </div>
       <button v-for="t in tagTree.loose" :key="t.tag" class="tk-filter-item" type="button"
               :class="{ on: tagFilter === t.tag }" @click="$emit('toggle-tag', t.tag)">
-        <i class="la la-tag"></i><span>{{ t.label }}</span><span class="cnt">{{ t.n }}</span>
+        <i class="la la-tag"></i><span>{{ t.label }}</span>
+        <span class="tk-tagdot" :class="{ empty: !hexOf(t.tag) }" :style="hexOf(t.tag) ? { background: hexOf(t.tag) } : null" :title="$t('app.tagColorTip')"
+              @click.stop="$emit('edit-tag-color', t.tag)"></span>
+        <span class="cnt">{{ t.n }}</span>
       </button>
     </template>
 
@@ -60,14 +69,24 @@
 <script>
 // 列表视图左侧筛选侧栏（日期 / 标签 / 清单）。
 // 纯展示组件：所有选择动作上抛，标签与清单的互斥等逻辑由容器处理。
+import { validHex } from '../../composables/tasks-logic.js';
+
 export default {
   name: 'TaskFilters',
+  methods: {
+    // 标签已配置颜色时返回 #hex（供圆点实色显示），否则空串（空心圆点）
+    hexOf(tag) {
+      return validHex(this.tagColors && this.tagColors[tag]);
+    }
+  },
   props: {
     dateFilters: { type: Array, default: () => [] },
     dateFilter: { type: String, default: 'all' },
     // 标签树：{ groups: [{label, tag, n, items}], loose: [{label, tag, n}] }
     tagTree: { type: Object, required: true },
     tagFilter: { type: String, default: '' },
+    // 标签颜色映射（issue #8）：圆点据此显示实色 / 空心
+    tagColors: { type: Object, default: () => ({}) },
     checklists: { type: Array, default: () => [] },
     activeList: { type: String, default: '' },
     // 状态视图：'' | 'done' | 'cancelled'；statusCounts 为当前池内的数量
@@ -101,6 +120,26 @@ export default {
 .tk-filter-item i { flex: none; width: 15px; text-align: center; font-size: 13px; }
 .tk-filter-item span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tk-filter-item .cnt { flex: none; font-size: 12px; opacity: .7; font-variant-numeric: tabular-nums; }
+/* 标签颜色圆点（issue #8）：纯 CSS 圆点负责视觉（已配置实色底、未配置空心描边），
+   点击弹原生取色 Modal。
+   用 .tk-filter-item / .tk-filter-row 前缀提权，压掉 .tk-filter-item span 的 flex 撑满规则
+   （否则圆点被拉成椭圆） */
+.tk-filter-item .tk-tagdot,
+.tk-filter-row .tk-tagdot {
+  position: relative; flex: none; width: 12px; height: 12px;
+  /* 虚线描边：已配置颜色的圆点会以实色底覆盖（border-color: transparent），只剩实色圆 */
+  border: 1px dashed var(--ink-soft); border-radius: 50%;
+  display: inline-block; cursor: pointer;
+  transition: transform .12s ease;
+}
+.tk-filter-item .tk-tagdot:not(.empty),
+.tk-filter-row .tk-tagdot:not(.empty) { border-color: transparent; }
+.tk-filter-item .tk-tagdot:hover,
+.tk-filter-row .tk-tagdot:hover { transform: scale(1.15); }
+/* 选中态：圆点改 1.5px 白描边（已配置实线、未配置保持虚线），计数用白色 */
+.tk-filter-item.on .tk-tagdot { border-color: #fff; border-width: 1.5px; border-style: solid; }
+.tk-filter-item.on .tk-tagdot.empty { border-style: dashed; }
+.tk-filter-item.on .cnt { color: #fff; opacity: 1; }
 .tk-filter-parent { font-weight: 600; }
 .tk-filter-child { padding-left: 24px; font-size: 13.5px; }
 /* 清单行：名称按钮（选中加载任务）+ 打开文件图标 */

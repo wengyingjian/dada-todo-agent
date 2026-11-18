@@ -31,7 +31,7 @@
         <div v-if="!g.tasks.length" class="tk-ag-none" :class="{ 'is-today': g.isToday }">{{ $t('app.dayEmpty') }}</div>
         <div v-for="t in g.tasks" :key="t.guid" class="tk-ag-row"
              :class="{ done: t.completed || t.cancelled, dragging: ctx.dragGuid === t.guid }"
-             draggable="true" :title="ctx.dragHint(t)"
+             draggable="true"
              @dragstart="ctx.onDragStart(t, $event)" @dragend="ctx.onDragEnd" @click="ctx.onTaskClick(t, $event)"
              @contextmenu.prevent="ctx.openCtx(t, $event)">
           <span class="tk-ag-time">{{ ctx.agendaWhen(t, g.kind) }}</span>
@@ -41,6 +41,7 @@
           </span>
           <div class="tk-ag-card" :style="ctx.agendaCard(t)">
             <span class="tk-ag-sum" :class="{ done: t.completed || t.cancelled, cancel: t.cancelled }" v-html="ctx.richSummaryNoTags(t)" @click="ctx.onRichClick"></span>
+            <span v-if="t.scheduledAt" class="tk-sched" v-tooltip="scheduledText(t)">{{ scheduledText(t) }}</span>
             <!-- 跨日期任务右侧小字：显示开始-结束日期区间（如 10/2-10/7） -->
             <span v-if="ctx.spanRange(t)" class="tk-ag-range">{{ ctx.spanRange(t) }}</span>
           </div>
@@ -56,7 +57,7 @@
 <script>
 // 日程视图：按日期顺序的纵向议程（已延期 → 今天起未来7天 → 更远）。
 // 只读父级共享状态/方法（通过 ctx），自身只持有分组计算。
-import { weekdayShort } from '../../composables/tasks-logic.js';
+import { weekdayShort, scheduledText } from '../../composables/tasks-logic.js';
 
 const pad = (n) => (n < 10 ? '0' + n : '' + n);
 function ymd(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
@@ -66,6 +67,10 @@ export default {
   props: {
     ctx: { type: Object, required: true },
     plugin: { type: Object, default: null }
+  },
+  methods: {
+    // ⏳ 计划日期徽标文本（issue #13，仅展示）
+    scheduledText(t) { return scheduledText(t); }
   },
   computed: {
     // 日程视图分组：已延期 → 今天起未来 7 天（按天）→ 更远；无日期任务不进入
@@ -200,14 +205,14 @@ export default {
 .tk-ag-dot.cancel { color: var(--c-cancel); }
 .tk-ag-card { display: flex; align-items: center; gap: 8px; margin: 10px 20px; padding: 20px 10px; border-radius: 10px; border-left: 3px solid var(--ag-bar, var(--line)); min-width: 0; transition: filter .15s ease; }
 .tk-ag-card:hover { filter: brightness(.97); }
-.tk-ag-sum { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.tk-ag-sum { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 /* 跨日期任务右侧小字：开始-结束日期区间（如 10/2-10/7），靠右、小号、低透明度 */
 .tk-ag-range { flex: none; margin-left: auto; padding-left: 8px; font-size: 9px; opacity: .7; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tk-ag-sum.done { opacity: .55; }
 .tk-ag-sum.cancel { text-decoration: line-through; }
-/* 已完成 / 已取消：整块卡片（含彩色背景）降透明，与日视图 .tk-tl-aditem.done 一致 */
-.tk-ag-row.done .tk-ag-card { opacity: .6; }
-.tk-ag-row.done .tk-ag-time { opacity: .55; }
+/* 已完成 / 已取消：整块卡片（含彩色背景）统一降透明（--done-* 令牌）；
+   摘要文字不再单独降透明（原先嵌套叠加 .6*.55 反而过淡），时间在卡片外故单独引用同一令牌 */
+.tk-ag-row.done .tk-ag-card { opacity: var(--done-opacity); }
+.tk-ag-row.done .tk-ag-time { opacity: var(--done-opacity); }
 .tk-ag-row.dragging { opacity: .5; }
 /* 视图变窄时：日期信息移到任务列表上方，让列表占满整宽。
    改用 @container（面板宽度）而非 @media（主窗口），使其与左侧日期导航行为一致 */

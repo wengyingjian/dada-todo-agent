@@ -21,7 +21,7 @@
                   @navigate="onNav" @switch-view="switchView"
                   @toggle-todo-panel="todoPanelOpen = !todoPanelOpen"
                   @toggle-hide-done="toggleHideDone" @set-cl-main-view="setClMainView"
-                  @back-to-today="scrollAgendaToToday" />
+                  @new-task="openNew()" @back-to-today="scrollAgendaToToday" />
 
     <div class="tk-body">
       <transition name="tk-view" mode="out-in" appear>
@@ -102,13 +102,15 @@ import {
   renderInlineHtml, plainInline,
   dateText, timeText, statusIcon, plainTitle, richSummaryNoTags, doneDay, spanDateText,
   colorOf, itemColor, lunarDayText, lunarTagText, holidayOf, weekdayLong,
-  getWeekStart, spansDays
+  getWeekStart, spansDays, tagColorOf, usedTagColors
 } from '../composables/tasks-logic.js';
 import TaskEditorModal from '../components/TaskEditorModal.vue';
 import TaskTopBar from '../components/TaskTopBar.vue';
 import WeekDayView from '../components/WeekDayView.vue';
 import TaskRow from '../components/tasks/TaskRow.vue';
 import { openTaskInFile } from '../utils/openTaskInFile.js';
+import { handleInlineLinkClick } from '../utils/openWikilink.js';
+import { TagColorModal } from '../ui/modals.js';
 
 import ChecklistView from '../components/tasks/ChecklistView.vue';
 import TaskMonthView from '../components/tasks/TaskMonthView.vue';
@@ -209,6 +211,9 @@ export default {
     // 是否采用左侧竖向菜单：由设置项 menuStyle 控制（horizontal=底部胶囊 / vertical=左侧竖向菜单）。
     // 直接读取响应式 settings，设置页改动后即时生效（无需重启）。基础版与 Pro 共用此开关，体验一致。
     verticalMenu() { return (this.plugin.settings && this.plugin.settings.menuStyle) === 'vertical'; },
+    // 标签颜色映射（issue #8）：列表视图侧栏圆点据此显示实色 / 空心。
+    // 必须是 computed——methods 里的同名函数经 ctx 传给子组件时是函数引用，子组件永远查空
+    tagColors() { return (this.plugin.settings && this.plugin.settings.tagColors) || {}; },
     // 视图菜单项：按设置的顺序（menuViews）排列并过滤隐藏项（menuHiddenViews）。
     // settings 为响应式对象，设置页改动后菜单即时更新，无需重载视图。
     menuItems() {
@@ -545,6 +550,19 @@ export default {
     // 时间轴块配色 / 农历 / 节假日：纯函数在 tasks-logic（周视图组件与月视图 ctx 共用），此处仅作委托
     colorOf(t) { return colorOf(t); },
     itemColor(t) { return itemColor(t); },
+    // 侧栏圆点点击改色（issue #8）：统一走 plugin.setTagColor（落盘 + 注入取色层 + 刷新视图）
+    async setTagColor(tag, color) {
+      await this.plugin.setTagColor(tag, color);
+    },
+    // 圆点点击弹原生取色 Modal：预设色板 + data.json 里已自定义的颜色 + 自定义取色器
+    openTagColorModal(tag) {
+      new TagColorModal(this.plugin.app, {
+        tag,
+        color: tagColorOf(tag),
+        customColors: usedTagColors(this.plugin.settings.tagColors),
+        onSave: (t2, color) => { this.setTagColor(t2, color); }
+      }).open();
+    },
     // 日程视图：左侧时间点 / 右侧卡片，沿用时间轴配色；文字色走 itemColor（皮卡丘近黑/焦棕深底色卡走亮字、其余亮底深字，紫罗兰走亮色字）
     agendaCard(t) { const c = this.colorOf(t); return { background: c.bg, color: itemColor(t).color, '--ag-bar': c.fg }; },
     // 日程视图：已延期 / 更远 分组折叠切换
@@ -695,9 +713,9 @@ export default {
     richSummaryNoTags(t) { return richSummaryNoTags(t); },
     // 纯标题（不含链接与标签的 Markdown），用于详情面板
     plainTitle(t) { return plainTitle(t); },
-    // v-html 内的链接点击：阻止冒泡，避免同时触发所在行的「打开编辑器」
+    // v-html 内的链接点击：拦截 [[双链]] 跳转，其余 <a> 仅阻止冒泡（保留默认跳转）
     onRichClick(e) {
-      if (e.target && e.target.tagName === 'A') e.stopPropagation();
+      handleInlineLinkClick(e, this.plugin);
     },
     onDragStart(t, e) {
       this.dragGuid = t.guid;
@@ -744,7 +762,7 @@ export default {
         const d = new Date(t.dueAt); // 保留原来的时刻
         dueAt = new Date(dayKey + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':00').getTime();
       }
-      const payload = { summary: t.summary, description: t.description, dueAt, dueAllDay: allDay };
+      const payload = { summary: t.summary, description: t.description, priority: t.priority, dueAt, dueAllDay: allDay };
       // 跨日期全天任务：落点作为开始日，结束日按原跨度顺延，保持原天数不变
       if (allDay && t.startAt && t.startAt !== t.dueAt) {
         const day = 86400000;
@@ -902,7 +920,7 @@ export default {
   transition: border-color .15s ease, background .15s ease, box-shadow .15s ease, opacity .15s ease;
 }
 .tk-item:hover { border-color: var(--gold-soft); box-shadow: var(--shadow); }
-.tk-item.done { color: var(--ink-soft); opacity: .75; }
+.tk-item.done { color: var(--done-color); opacity: var(--done-opacity); }
 .tk-item.dragging { opacity: .4; cursor: grabbing; }
 .tk-item-top { display: flex; align-items: flex-start; gap: 6px; }
 /* 取消共享样式里 tk-check 的 line-height:26px（会使图标下沉，顶对齐时错位） */
