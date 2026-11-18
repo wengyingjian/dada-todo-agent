@@ -109,10 +109,18 @@ export default class DadaTodoPlugin extends Plugin {
 
     this.registerView(this.viewType, (leaf) => new DadaTodoView(leaf, this));
 
-    // [project-view] T3 Code 反向同步：启动 8 秒后跑一次（等 Obsidian 索引就绪），之后每 60 秒一次
-    const syncTick = () => { syncOnce(this).catch((e) => console.warn('[DadaAgent] 反向同步失败：', e)); };
+    // [project-view] T3 Code 反向同步：启动 8 秒后跑一次（等 Obsidian 索引就绪），之后按设置里的间隔（默认 60 秒）轮询。
+    // 定时器固定 15 秒一跳，到点才真正查询，这样用户在设置里改间隔无需重启插件。
+    let lastSyncAt = 0;
+    const syncTick = () => {
+      lastSyncAt = Date.now();
+      syncOnce(this).catch((e) => console.warn('[DadaAgent] 反向同步失败：', e));
+    };
     this.registerInterval(window.setTimeout(syncTick, 8000));
-    this.registerInterval(window.setInterval(() => { syncTick(); }, 60 * 1000));
+    this.registerInterval(window.setInterval(() => {
+      const every = Math.max(15, Number((this.settings.project || {}).reverseSyncSeconds) || 60) * 1000;
+      if (Date.now() - lastSyncAt >= every) syncTick();
+    }, 15 * 1000));
 
     this.addRibbonIcon(ribbonIcon, t('app.openDada'), () => this.activateView());
 
