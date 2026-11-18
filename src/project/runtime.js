@@ -276,8 +276,16 @@ export async function updateDelegation(plugin, filePath, threadId, patch) {
 export async function rebuildDelegationMap(plugin) {
   const map = new Map();
   const root = rootOf(plugin);
+  // 项目文件 + 日记：回传到日记的会话也要能持续更新状态
+  const journal = String((plugin.settings && plugin.settings.journalFolder) || '/')
+    .trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  const inScope = (p) => {
+    if (root && (p === root || p.startsWith(root + '/'))) return true;
+    if (!journal) return true; // 日记文件夹为库根 → 全库
+    return p === journal || p.startsWith(journal + '/');
+  };
   for (const f of plugin.app.vault.getMarkdownFiles()) {
-    if (f.path !== root && !f.path.startsWith(root + '/')) continue;
+    if (!inScope(f.path)) continue;
     const lines = String(await plugin.app.vault.read(f)).split('\n');
     for (const d of extractDelegations(lines)) {
       if (!d.threadId) continue;
