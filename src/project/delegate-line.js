@@ -4,7 +4,10 @@ export const T3_MARK = '⚡ t3:';
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
 export function shortId(threadId) {
-  return String(threadId || '').replace(/-/g, '').slice(0, 6);
+  // 会话 id 可能带 mcp: 之类前缀，展示时只取 uuid 的前 6 位
+  const id = String(threadId || '');
+  const uuid = UUID_RE.exec(id);
+  return (uuid ? uuid[0] : id).replace(/-/g, '').slice(0, 6);
 }
 
 const STATE_TEXT = {
@@ -27,7 +30,8 @@ export function formatDelegationLine({ state = 'running', summary = '', threadId
   const text = state === 'running' || state === 'awaiting' || state === 'cancelled'
     ? (summary || STATE_TEXT[state])
     : (summary || (state === 'failed' ? '失败' : '完成'));
-  const tail = threadId ? `  ${T3_MARK}${threadId}` : '';
+  // 标记始终写上：还没有会话 id 的占位行 / 起进程就失败的子行也要能被识别出来
+  const tail = `  ${T3_MARK}${threadId || ''}`;
   return `${indent}${box} ${text}${tail}`.replace(/\s+$/, '');
 }
 
@@ -35,8 +39,12 @@ export function parseDelegationLine(line) {
   const raw = String(line == null ? '' : line);
   const idx = raw.indexOf(T3_MARK);
   if (idx < 0) return null;
-  const threadId = (UUID_RE.exec(raw.slice(idx + T3_MARK.length)) || [])[0];
-  if (!threadId) return null;
+  // 会话 id 可能是 `mcp:<uuid>`：整段都算 id（数据库里就是这个形态），只截掉行尾杂字符
+  const tail = raw.slice(idx + T3_MARK.length).trim();
+  const token = (tail.split(/\s+/)[0] || '');
+  const uuid = UUID_RE.exec(token);
+  // 允许没有会话 id：占位行、启动就失败的子行都属于委派记录
+  const threadId = uuid ? token.slice(0, token.indexOf(uuid[0]) + uuid[0].length) : '';
   const m = /^([ \t]*)- \[([ xX/–-])\]\s*(.*)$/.exec(raw.slice(0, idx).replace(/\s+$/, ''));
   if (!m) return null;
   const indent = m[1];

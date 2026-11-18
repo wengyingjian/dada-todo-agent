@@ -39,6 +39,7 @@
         :tasks="tasks"
         :dels-by-line="delsByLine"
         @toggle="onToggle"
+        @edit="onEdit"
         @delegate="openDelegate"
         @archive="onArchive"
         @remove="onRemove"
@@ -106,6 +107,8 @@ export default {
     doneCount() { return this.tasks.filter((t) => t.completed).length; }
   },
   async mounted() {
+    // e2e 调试口：仅在脚本显式打开时挂到 window，正常使用不产生任何行为
+    if (typeof window !== 'undefined' && window.__dadaE2E) window.__pa = { rt, view: this };
     await this.refresh();
     this.ro = new ResizeObserver((entries) => {
       const w = entries[0] && entries[0].contentRect && entries[0].contentRect.width;
@@ -187,6 +190,15 @@ export default {
       if (!r || !r.ok) new Notice('更新失败：' + (r && r.reason || 'unknown'));
       await this.refreshActive();
     },
+    async onEdit(task) {
+      const next = window.prompt('修改任务', task.summary);
+      if (next == null) return;
+      const text = String(next).trim();
+      if (!text || text === task.summary) return;
+      const r = await rt.editTask(this.plugin, task, { summary: text });
+      if (!r || !r.ok) new Notice('修改失败：' + (r && r.reason || 'unknown'));
+      await this.refreshActive();
+    },
     async onRemove(task) {
       const dels = this.delsByLine[task.lineNo] || [];
       for (const d of dels) if (d.threadId) await rt.ignoreThread(this.plugin, d.threadId);
@@ -260,7 +272,20 @@ export default {
         const r = await rt.setProjectCwd(this.plugin, node, v);
         if (!r.ok) new Notice('写入失败');
         await this.refresh();
+        if (r.ok) this.applyCwd(node.dirPath, r.cwd);
       }
+    },
+    // 元数据缓存还没刷新时，先在内存里把 cwd 生效，避免界面要等下一轮扫描
+    applyCwd(dirPath, ownCwd) {
+      const hit = this.index.byDir.get(dirPath);
+      if (!hit) return;
+      hit.ownCwd = ownCwd || '';
+      const def = rt.projectSettings(this.plugin).projectDefaultCwd || '';
+      const walk = (n, inherited) => {
+        n.cwd = n.ownCwd || inherited || def;
+        for (const c of n.children) walk(c, n.cwd);
+      };
+      for (const r of this.index.roots) walk(r, '');
     },
     async newRootProject() {
       const name = window.prompt('项目名称', '');

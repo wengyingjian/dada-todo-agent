@@ -1,6 +1,7 @@
 // 反向同步：读 T3 Code 的 statev2.sqlite（只读），把未绑定的会话回传成任务。
 // 纯函数（SQL、行映射、归属）可单测；I/O 集中在 queryThreads。
 
+import { execFile as nodeExecFile } from 'node:child_process';
 import { matchProjectByCwd } from './index.js';
 import { stateFromRun } from './delegate-line.js';
 
@@ -68,7 +69,7 @@ export function chooseOwner(cwd, nodes) {
 
 // 只读查询：返回线程数组；任何失败都返回空数组（调用方记日志，不弹窗）
 export async function queryThreads(dbPath, sinceMs, { execFile } = {}) {
-  const run = execFile || (await import('node:child_process')).execFile;
+  const run = execFile || nodeExecFile;
   const floor = new Date(sinceMs || Date.now() - 24 * 3600 * 1000).toISOString();
   return new Promise((resolve) => {
     run('sqlite3', ['-readonly', '-json', dbPath, buildScanSql(floor)], { maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {

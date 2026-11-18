@@ -93,7 +93,7 @@ export async function startDelegation(plugin, rt, opts) {
   const finishLine = async (threadId, state, summary) => {
     const f = plugin.app.vault.getAbstractFileByPath(node.filePath);
     if (!f) return;
-    const lines = String(await plugin.app.vault.read(f)).split('\n');
+    const { head, lines } = (rt.splitFile ? rt.splitFile(await plugin.app.vault.read(f)) : { head: '', lines: String(await plugin.app.vault.read(f)).split('\n') });
     const target = formatDelegationLine({ state, summary, threadId });
     if (lines[lineNo] != null && /进行中|等你回答/.test(lines[lineNo])) {
       lines[lineNo] = target;
@@ -108,7 +108,7 @@ export async function startDelegation(plugin, rt, opts) {
       if (at < 0) return;
       lines[at] = target;
     }
-    await plugin.app.vault.modify(f, lines.join('\n'));
+    await plugin.app.vault.modify(f, rt.joinFile ? rt.joinFile(head, lines) : lines.join('\n'));
   };
 
   // 1.5s 后尝试从数据库回填 threadId（CLI 结束时才输出，长会话期间靠扫描回填）

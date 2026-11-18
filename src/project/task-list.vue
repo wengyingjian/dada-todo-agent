@@ -3,7 +3,7 @@
     <div v-for="t in tasks" :key="t.guid" class="pa-task" :class="{ done: t.completed }">
       <div class="pa-task-line">
         <input class="pa-check" type="checkbox" :checked="t.completed" @change="$emit('toggle', t, !t.completed)" />
-        <span class="pa-task-title" :title="t.description || ''">{{ t.summary }}</span>
+        <span class="pa-task-title" :title="(t.description || '') + '（双击修改）'" @dblclick="$emit('edit', t)">{{ t.summary }}</span>
         <button class="pa-act pa-fly" title="委派给 T3 Code" @click="$emit('delegate', t)">✈</button>
         <button class="pa-act" title="归档" @click="$emit('archive', t)">⤓</button>
         <button class="pa-act pa-del" title="删除" @click="$emit('remove', t)">×</button>
@@ -29,7 +29,7 @@ export default {
     tasks: { type: Array, default: () => [] },
     delsByLine: { type: Object, default: () => ({}) }
   },
-  emits: ['toggle', 'delegate', 'archive', 'remove', 'open-thread'],
+  emits: ['toggle', 'edit', 'delegate', 'archive', 'remove', 'open-thread'],
   methods: {
     short(id) { return shortId(id); },
     delsOf(t) { return this.delsByLine[t.lineNo] || []; },

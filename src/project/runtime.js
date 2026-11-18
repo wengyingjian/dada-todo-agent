@@ -56,17 +56,38 @@ export function nodeOf(plugin, dirPath) {
   return idx.byDir.get(dirPath) || null;
 }
 
+// 上游任务 API 统一返回 { status, body }；这里只关心 body
+function unwrap(r) {
+  if (!r) return {};
+  return r.body && typeof r.body === 'object' ? r.body : r;
+}
+
 export async function loadProjectTasks(plugin, node) {
   if (!node || !node.filePath) return [];
-  const r = await API.loadByList(listKeyOf(node.filePath));
-  return r && r.ok ? r.items : [];
+  const b = unwrap(await API.loadByList(listKeyOf(node.filePath)));
+  return b.ok === false ? [] : (b.items || []);
+}
+
+// 上游任务 API 的行号是「正文行号」（不含 frontmatter）。项目视图的读写一律按这个口径，
+// 否则归档与委派子行会整体错位。
+const HEAD_RE = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
+
+export function splitFile(raw) {
+  const text = String(raw == null ? '' : raw);
+  const m = HEAD_RE.exec(text);
+  if (!m) return { head: '', lines: text.split('\n') };
+  return { head: m[0], lines: text.slice(m[0].length).split('\n') };
+}
+
+export function joinFile(head, lines) {
+  return String(head || '') + (lines || []).join('\n');
 }
 
 export async function readProjectLines(plugin, node) {
   if (!node || !node.filePath) return [];
   const f = plugin.app.vault.getAbstractFileByPath(node.filePath);
   if (!(f instanceof TFile)) return [];
-  return String(await plugin.app.vault.read(f)).split('\n');
+  return splitFile(await plugin.app.vault.read(f)).lines;
 }
 
 // 委派子行按父任务行号归组
@@ -106,19 +127,19 @@ export async function createTask(plugin, node, summary) {
   const text = String(summary || '').trim();
   if (!text) return { ok: false, reason: 'missing_summary' };
   await ensureProjectFile(plugin, node);
-  return API.createChecklistTask(listKeyOf(node.filePath), '', { summary: text });
+  return unwrap(await API.createChecklistTask(listKeyOf(node.filePath), '', { summary: text }));
 }
 
 export async function toggleTask(plugin, task, done) {
-  return API.toggleTask(task.guid, done);
+  return unwrap(await API.toggleTask(task.guid, done));
 }
 
 export async function removeTask(plugin, task) {
-  return API.deleteTask(task.guid);
+  return unwrap(await API.deleteTask(task.guid));
 }
 
 export async function editTask(plugin, task, patch) {
-  return API.updateTask(task.guid, patch);
+  return unwrap(await API.updateTask(task.guid, patch));
 }
 
 export async function createProject(plugin, parentDirPath, name) {
@@ -156,13 +177,14 @@ export async function setProjectCwd(plugin, node, cwd) {
   await ensureProjectFile(plugin, node);
   const f = plugin.app.vault.getAbstractFileByPath(node.filePath);
   if (!(f instanceof TFile)) return { ok: false };
+  const v = normalizeCwd(cwd);
   await plugin.app.fileManager.processFrontMatter(f, (fm) => {
-    const v = normalizeCwd(cwd);
     if (v) fm.cwd = v; else delete fm.cwd;
     fm.type = 'project';
     if (!fm.tags) fm.tags = ['todoList'];
   });
-  return { ok: true };
+  // 元数据缓存刷新有延迟，把结果一并返回，调用方可以立刻更新界面
+  return { ok: true, cwd: v };
 }
 
 // 当天日记路径（复用上游 taskFilePath 的查找与回落逻辑）
@@ -189,8 +211,7 @@ export async function archiveTasks(plugin, node, lineNos) {
   if (!target.size) return { ok: true, moved: 0 };
   const srcFile = plugin.app.vault.getAbstractFileByPath(node.filePath);
   if (!(srcFile instanceof TFile)) return { ok: false, reason: 'no_file' };
-  const raw = String(await plugin.app.vault.read(srcFile));
-  const lines = raw.split('\n');
+  const { head, lines } = splitFile(await plugin.app.vault.read(srcFile));
   const blocks = taskBlocks(lines).filter((b) => target.has(b.start));
   if (!blocks.length) return { ok: true, moved: 0 };
 
@@ -199,7 +220,7 @@ export async function archiveTasks(plugin, node, lineNos) {
   for (const b of blocks) {
     for (let i = b.start; i < b.end; i++) { movedLines.push(lines[i]); removed.add(i); }
   }
-  const kept = lines.filter((_, i) => !removed.has(i)).join('\n');
+  const kept = lines.filter((_, i) => !removed.has(i));
 
   const dir = node.dirPath;
   const folder = plugin.app.vault.getAbstractFileByPath(dir);
@@ -208,7 +229,7 @@ export async function archiveTasks(plugin, node, lineNos) {
     for (const child of folder.children) {
       if (!(child instanceof TFile) || !/\.md$/i.test(child.path)) continue;
       if (child.path === node.filePath) continue;
-      siblings.push({ path: child.path, lines: String(await plugin.app.vault.read(child)).split('\n') });
+      siblings.push({ path: child.path, lines: splitFile(await plugin.app.vault.read(child)).lines });
     }
   }
   const dates = blocks
@@ -226,7 +247,7 @@ export async function archiveTasks(plugin, node, lineNos) {
   } else {
     await plugin.app.vault.create(pick.path, '# 归档\n\n' + movedLines.join('\n') + '\n');
   }
-  await plugin.app.vault.modify(srcFile, kept.replace(/\s+$/, '') + '\n');
+  await plugin.app.vault.modify(srcFile, joinFile(head, kept).replace(/\s+$/, '') + '\n');
   return { ok: true, moved: blocks.length, archivePath: pick.path };
 }
 
@@ -244,19 +265,19 @@ export async function listArchives(plugin, node) {
 export async function appendDelegation(plugin, node, parentLineNo, delegate) {
   const file = plugin.app.vault.getAbstractFileByPath(node.filePath);
   if (!(file instanceof TFile)) return { ok: false };
-  const lines = String(await plugin.app.vault.read(file)).split('\n');
+  const { head, lines } = splitFile(await plugin.app.vault.read(file));
   let insertAt = parentLineNo + 1;
   while (insertAt < lines.length && /^\s*$/.test(lines[insertAt])) insertAt++;
   const line = formatDelegationLine(delegate);
   lines.splice(insertAt, 0, line);
-  await plugin.app.vault.modify(file, lines.join('\n'));
+  await plugin.app.vault.modify(file, joinFile(head, lines));
   return { ok: true, lineNo: insertAt };
 }
 
 export async function updateDelegation(plugin, filePath, threadId, patch) {
   const file = plugin.app.vault.getAbstractFileByPath(filePath);
   if (!(file instanceof TFile)) return { ok: false };
-  const lines = String(await plugin.app.vault.read(file)).split('\n');
+  const { head, lines } = splitFile(await plugin.app.vault.read(file));
   for (let i = 0; i < lines.length; i++) {
     const d = parseDelegationLine(lines[i]);
     if (!d || d.threadId !== threadId) continue;
@@ -266,7 +287,7 @@ export async function updateDelegation(plugin, filePath, threadId, patch) {
       threadId,
       indent: d.indent
     });
-    await plugin.app.vault.modify(file, lines.join('\n'));
+    await plugin.app.vault.modify(file, joinFile(head, lines));
     return { ok: true, lineNo: i };
   }
   return { ok: false, reason: 'not_found' };
@@ -286,7 +307,7 @@ export async function rebuildDelegationMap(plugin) {
   };
   for (const f of plugin.app.vault.getMarkdownFiles()) {
     if (!inScope(f.path)) continue;
-    const lines = String(await plugin.app.vault.read(f)).split('\n');
+    const lines = splitFile(await plugin.app.vault.read(f)).lines;
     for (const d of extractDelegations(lines)) {
       if (!d.threadId) continue;
       map.set(d.threadId, { filePath: f.path, lineNo: d.line, parentLine: d.parentLine, state: d.state, summary: d.summary });
@@ -359,7 +380,9 @@ export async function syncOnce(plugin) {
   const idx = scanProjects(plugin);
   const map = await rebuildDelegationMap(plugin);
   const ignored = new Set((plugin.settings && plugin.settings.projectIgnoredThreads) || []);
-  const minAge = Math.max(0, Number(s.reverseSyncMinMinutes) || 3) * 60000;
+  // 0 表示立刻同步：不能用 `|| 3`，否则 0 会被当成未设置而回落到 3 分钟
+  const rawMin = Number(s.reverseSyncMinMinutes);
+  const minAge = Math.max(0, Number.isFinite(rawMin) ? rawMin : 3) * 60000;
   const maxChars = Number(s.summaryMaxChars) || 200;
   const now = Date.now();
   let created = 0;
@@ -390,7 +413,7 @@ export async function syncOnce(plugin) {
       dirPath = filePath.split('/').slice(0, -1).join('/');
     }
     const key = 'cl:' + filePath.replace(/\.md$/i, '');
-    const r = await API.createChecklistTask(key, '', { summary: threadTitleOf(t) });
+    const r = unwrap(await API.createChecklistTask(key, '', { summary: threadTitleOf(t) }));
     if (!r || !r.ok) continue;
     await appendDelegation(plugin, { filePath, dirPath }, r.task.lineNo, {
       state: t.state || 'running',

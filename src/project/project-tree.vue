@@ -5,6 +5,15 @@
         <span class="pa-caret" @click.stop="toggle(n.dirPath)">{{ openSet.has(n.dirPath) ? '▾' : '▸' }}</span>
         <span class="pa-node-name">{{ n.name }}</span>
         <span v-if="n.unfinished" class="pa-cnt">{{ n.unfinished }}</span>
+        <button class="pa-act pa-node-more" title="项目操作" @click.stop="openInline(n, $event)">⋯</button>
+      </div>
+      <!-- 内嵌操作菜单：右键弹出的是系统原生菜单，鼠标脚本点不到，这里给同样的四个动作一个可点的入口 -->
+      <div v-if="inline && inline.dir === n.dirPath" class="pa-inline-menu"
+           :style="{ left: inline.x + 'px', top: inline.y + 'px' }" @click.stop>
+        <button class="pa-inline-item" @click="pick('new-child')">新建子项目</button>
+        <button class="pa-inline-item" @click="pick('rename')">重命名项目</button>
+        <button class="pa-inline-item" @click="pick('open')">打开项目文件</button>
+        <button class="pa-inline-item" @click="pick('cwd')">设置 cwd</button>
       </div>
       <project-tree
         v-if="n.children && n.children.length && openSet.has(n.dirPath)"
@@ -32,7 +41,26 @@ export default {
     depth: { type: Number, default: 0 }
   },
   emits: ['select', 'toggle', 'action'],
+  data() {
+    return { inline: null };
+  },
+  mounted() {
+    this.onDocClick = (e) => { if (e.target && e.target.closest && e.target.closest('.pa-inline-menu')) return; this.inline = null; };
+    document.addEventListener('mousedown', this.onDocClick, true);
+  },
+  beforeUnmount() {
+    document.removeEventListener('mousedown', this.onDocClick, true);
+  },
   methods: {
+    openInline(n, ev) {
+      const r = ev.currentTarget.getBoundingClientRect();
+      this.inline = { dir: n.dirPath, x: Math.round(r.left), y: Math.round(r.bottom + 4), node: n };
+    },
+    pick(action) {
+      const node = this.inline && this.inline.node;
+      this.inline = null;
+      if (node) this.$emit('action', action, node);
+    },
     select(n) {
       this.$emit('toggle', n.dirPath);
       this.$emit('select', n);

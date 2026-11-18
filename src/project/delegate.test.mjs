@@ -21,6 +21,21 @@ test('解析子行：状态、摘要、会话 id', () => {
   assert.equal(p.indent, '\t');
 });
 
+test('解析子行：保留 mcp: 前缀的会话 id', () => {
+  const p = parseDelegationLine(`\t- [x] 完成  ⚡ t3:mcp:${ID}`);
+  assert.equal(p.threadId, `mcp:${ID}`);
+  assert.equal(p.state, 'completed');
+});
+
+test('解析子行：没有会话 id 的占位/失败行也认得', () => {
+  const p = parseDelegationLine(`\t- [/] 进行中…  ⚡ t3:`);
+  assert.equal(p.threadId, '');
+  assert.equal(p.state, 'running');
+  const f = parseDelegationLine(`\t- [-] spawn t3 ENOENT  ⚡ t3:`);
+  assert.equal(f.state, 'failed');
+  assert.equal(f.threadId, '');
+});
+
 test('非委派行返回 null', () => {
   assert.equal(parseDelegationLine('- [ ] 普通任务'), null);
   assert.equal(parseDelegationLine('\t- [x] 普通子任务'), null);
