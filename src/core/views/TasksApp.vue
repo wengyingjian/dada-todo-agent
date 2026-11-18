@@ -68,6 +68,9 @@
                         @reload="reloadChecklists" @show-all="toggleHideDone" />
       </div>
 
+      <!-- ===== 项目视图（[project-view]） ===== -->
+      <project-view v-else-if="view === 'project'" key="project" :plugin="plugin" />
+
       <!-- ===== 列表视图（独立组件） ===== -->
       <task-list-view v-else key="list" :ctx="this" :plugin="plugin" />
       </transition>
@@ -112,6 +115,8 @@ import TaskMonthView from '../components/tasks/TaskMonthView.vue';
 import TaskAgendaView from '../components/tasks/TaskAgendaView.vue';
 import TaskListView from '../components/tasks/TaskListView.vue';
 import FourQuadrantView from '../components/tasks/FourQuadrantView.vue';
+// [project-view] 项目任务中心视图
+import ProjectView from '../../project/project-view.vue';
 import TaskContextMenu from '../components/tasks/TaskContextMenu.vue';
 import ViewPill from '../components/ViewPill.vue';
 import { ConfirmModal } from '../ui/modals.js';
@@ -127,7 +132,8 @@ export default {
   name: 'TasksApp',
   components: {
     TaskRow, ChecklistView, FourQuadrantView,
-    TaskMonthView, TaskAgendaView, TaskListView, TaskTopBar, WeekDayView, TaskContextMenu, ViewPill
+    TaskMonthView, TaskAgendaView, TaskListView, TaskTopBar, WeekDayView, TaskContextMenu, ViewPill,
+    ProjectView
   },
   setup() {
     // 列表视图状态域（筛选 / 清单 / 分桶 / 顺延）抽离至 useListState；

@@ -475,9 +475,91 @@ export class DadaTodoSettingTab extends PluginSettingTab {
       },
     ]);
 
+    // [project-view] 项目任务中心设置
+    const ps = () => {
+      if (!plugin.settings.project) plugin.settings.project = {};
+      return plugin.settings.project;
+    };
+    const pRow = (name, desc, render) => ({
+      type: 'setting',
+      name,
+      desc,
+      render: safe((s) => { s.setName(name); s.setDesc(desc); return render(s); }),
+    });
+    const projectGroup = {
+      type: 'group',
+      heading: '项目任务中心',
+      items: [
+        pRow('项目根目录', '库内相对路径，默认「任务」。每个文件夹是一个项目，项目文件为 task-<目录名>.md', (s) => {
+          s.addText((tx) => {
+            tx.setValue(String(ps().projectsRoot || '任务'));
+            tx.onChange(async (v) => {
+              ps().projectsRoot = String(v || '').trim() || '任务';
+              await plugin.saveSettings();
+              plugin.reloadOpenViews();
+            });
+          });
+        }),
+        pRow('默认 cwd', '项目链上没有配置 cwd 时使用；留空则不启用', (s) => {
+          s.addText((tx) => {
+            tx.setValue(String(ps().projectDefaultCwd || ''));
+            tx.onChange(async (v) => {
+              ps().projectDefaultCwd = String(v || '').trim();
+              await plugin.saveSettings();
+            });
+          });
+        }),
+        pRow('t3 命令路径', '默认自动探测 ~/.local/bin/t3；可填绝对路径', (s) => {
+          s.addText((tx) => {
+            tx.setValue(String(ps().t3Binary || ''));
+            tx.onChange(async (v) => {
+              ps().t3Binary = String(v || '').trim();
+              await plugin.saveSettings();
+            });
+          });
+        }),
+        pRow('反向同步', '把 T3 Code 自发的会话回传成任务（命中项目 cwd 进项目，否则进当天日记）', (s) => {
+          s.addToggle((tg) => {
+            tg.setValue(ps().reverseSync !== false);
+            tg.onChange(async (v) => {
+              ps().reverseSync = !!v;
+              await plugin.saveSettings();
+            });
+          });
+        }),
+        pRow('同步间隔（秒）', '默认 60', (s) => {
+          s.addText((tx) => {
+            tx.setValue(String(ps().reverseSyncSeconds || 60));
+            tx.onChange(async (v) => {
+              ps().reverseSyncSeconds = Math.max(15, Number(v) || 60);
+              await plugin.saveSettings();
+            });
+          });
+        }),
+        pRow('会话最短时长（分钟）', '短于该时长的会话不回传，默认 3', (s) => {
+          s.addText((tx) => {
+            tx.setValue(String(ps().reverseSyncMinMinutes || 3));
+            tx.onChange(async (v) => {
+              ps().reverseSyncMinMinutes = Math.max(0, Number(v) || 3);
+              await plugin.saveSettings();
+            });
+          });
+        }),
+        pRow('委派摘要长度', '写入子行的摘要最大字符数，默认 200', (s) => {
+          s.addText((tx) => {
+            tx.setValue(String(ps().summaryMaxChars || 200));
+            tx.onChange(async (v) => {
+              ps().summaryMaxChars = Math.max(20, Number(v) || 200);
+              await plugin.saveSettings();
+            });
+          });
+        })
+      ]
+    };
+
     // 顶部不再单独渲染插件名 + 版本标题行：Obsidian 设置页 Tab 标题本身已是插件名，避免重复
 
-    const defs = [appearance, journal, inbox, views, taskMark, about];
+    const defs = [appearance, journal, inbox, views, taskMark, projectGroup, about];
     return defs;
     } catch (e) {
       // 定义阶段抛错（非常罕见）：直接显示错误

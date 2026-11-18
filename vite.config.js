@@ -39,7 +39,7 @@ function laWoff2Only() {
 // ============================================================================
 
 const root = dirname(fileURLToPath(import.meta.url));
-const OUT_DIR = 'dada-todo-list';
+const OUT_DIR = 'dada-todo-agent'; // [project-view] fork 产物目录
 const isDev = process.env.DADA_DEV === '1';
 
 /** 构建后把 manifest.json 拷进产物目录（软链方式接库时产物必须自带 manifest） */
@@ -70,7 +70,10 @@ export default defineConfig({
       fileName: () => 'main.js'
     },
     rollupOptions: {
-      external: ['obsidian', 'electron', '@electron/remote'],
+      external: [
+        'obsidian', 'electron', '@electron/remote',
+        'child_process', 'fs', 'os', 'path', 'node:child_process', 'node:fs', 'node:os', 'node:path'
+      ],
       output: {
         // 手机端 webview 无 process 全局时的兜底（仅不存在时注入）
         banner: `try{if(typeof process==='undefined'){globalThis.process={env:{NODE_ENV:${JSON.stringify(isDev ? 'development' : 'production')}}};}}catch(e){}`,

@@ -11,6 +11,8 @@ export const VIEW_MENU_ITEMS = [
   { key: 'agenda', labelKey: 'app.viewAgenda', icon: 'la la-list-alt' },
   { key: 'matrix', labelKey: 'app.viewMatrix', icon: 'la la-th-large' },
   { key: 'cl', labelKey: 'app.viewCl', icon: 'la la-tasks' },
+  // [project-view] 项目视图
+  { key: 'project', labelKey: 'app.viewProject', icon: 'la la-folder' },
   { key: 'all', labelKey: 'app.viewAll', icon: 'la la-list' }
 ];
 

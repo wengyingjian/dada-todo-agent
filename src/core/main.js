@@ -9,6 +9,9 @@ import { setupHoverPreview, teardownHoverPreview } from './hoverPreview.js';
 import { DadaTodoSettingTab } from './ui/settings.js';
 import { initI18n, t } from './i18n/index.js';
 import { tooltip } from './directives/tooltip.js';
+// [project-view] 项目任务中心
+import { mergeProjectSettings } from '../project/settings.js';
+import { syncOnce } from '../project/runtime.js';
 import 'line-awesome/dist/line-awesome/css/line-awesome.min.css';
 import './styles/tokens.css';
 import './styles/modals.css';
@@ -40,7 +43,7 @@ class DadaTodoView extends ItemView {
   // 插件实例尚未注入（this.plugin 为空）而读到 undefined.viewType 崩溃。
   // && 短路保证 this.plugin / manifest 任意一层缺失时都有兜底，不会抛错。
   getViewType() {
-    return 'dada-todo-view';
+    return 'dada-todo-agent-view'; // [project-view] fork 新 id
   }
   getDisplayText() {
     return t('app.viewTitle');
@@ -85,9 +88,9 @@ export default class DadaTodoPlugin extends Plugin {
     await initI18n(this);
 
     // 本插件专属标识符（view type / 命令 id / 显示名）：免费版为历史兼容值 dada-todo-view / open-dada-todo。
-    this.viewType = 'dada-todo-view';
+    this.viewType = 'dada-todo-agent-view'; // [project-view] fork 新 id
     this.viewTitle = t('app.viewTitle');
-    const commandId = 'open-dada-todo';
+    const commandId = 'open-dada-todo-agent';
     const ribbonIcon = 'check-square';
 
     // 任务数据层注入插件实例（vault / metadataCache 读写）
@@ -126,6 +129,16 @@ export default class DadaTodoPlugin extends Plugin {
 
     // 明暗主题切换后，自动重算依赖主题的配色（如深色 / 浅色变体、块内文字等），无需手动切换视图
     this.registerThemeColorRefresh();
+
+    // [project-view] 反向同步：T3 Code 自发的会话回传到项目或当天日记
+    const ps = this.settings.project || {};
+    if (ps.reverseSync !== false) {
+      const sec = Math.max(15, Number(ps.reverseSyncSeconds) || 60);
+      this.registerInterval(window.setInterval(() => {
+        syncOnce(this).catch(() => {});
+      }, sec * 1000));
+      setTimeout(() => syncOnce(this).catch(() => {}), 8000);
+    }
   }
 
   /** 监听 Obsidian 明暗主题切换，自动重算依赖主题的配色（紫罗兰 dark/light 变体等） */
@@ -232,6 +245,12 @@ export default class DadaTodoPlugin extends Plugin {
       menuViews: normalizeMenuViews(data.menuViews),
       // 视图菜单：隐藏的视图 key（不显示在菜单上，但保留排序，可随时在设置页重新勾选显示）
       menuHiddenViews: normalizeMenuHidden(data.menuHiddenViews),
+      // [project-view] 项目任务中心设置；首次启用从 30 分钟前开始回传会话
+      project: (() => {
+        const p = mergeProjectSettings(data.project);
+        if (!p.syncSince) p.syncSince = Date.now() - 30 * 60000;
+        return p;
+      })(),
     };
     // 让设置在 Vue 中具备响应式：菜单样式等设置改动后可即时生效，无需重启 Obsidian
     this.settings = reactive(this.settings);

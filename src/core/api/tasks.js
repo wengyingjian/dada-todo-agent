@@ -405,7 +405,11 @@ function checklistFileEntries() {
   if (!wanted.length) return [];
   const mc = plugin.app.metadataCache;
   const out = [];
+  // [project-view] 项目文件也带 todoList 标记（复用任务 CRUD），但不进清单视图 / 待办池
+  const projectsRoot = String((plugin.settings && plugin.settings.project && plugin.settings.project.projectsRoot) || '任务')
+    .trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
   for (const f of vault().getMarkdownFiles()) {
+    if (projectsRoot && (f.path === projectsRoot || f.path.startsWith(projectsRoot + '/'))) continue;
     const cache = mc.getFileCache(f);
     const fm = cache && cache.frontmatter;
     if (!fm) continue;

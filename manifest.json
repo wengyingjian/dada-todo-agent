@@ -1,10 +1,10 @@
 {
-  "id": "dada-todo-list",
-  "name": "Dada Todo List",
-  "version": "0.8.0",
+  "id": "dada-todo-agent",
+  "name": "Dada 任务中心",
+  "version": "0.1.0",
   "minAppVersion": "1.13.0",
-  "description": "Tasks and checklists in plain Markdown checkboxes. Day, week, month and agenda views, grouped checklists, subtasks, tags, links, drag-to-reschedule, lunar calendar and holidays. Fully local.",
-  "author": "Plover",
-  "authorUrl": "https://github.com/sishen0112",
-  "isDesktopOnly": false
+  "description": "项目任务中心：以文件夹为项目数据库，任务可委派给 T3 Code 并回写结果；保留原日/周/月/日程/清单视图。Fully local.",
+  "author": "wengyingjian",
+  "authorUrl": "https://github.com/wengyingjian",
+  "isDesktopOnly": true
 }
