@@ -213,4 +213,20 @@
   margin-top: 6px;
 }
 
+/* [project-view] 已忽略工作区列表（设置页） */
+.dt-ignored-workspaces { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.dt-ignored-empty { font-size: var(--font-ui-small); color: var(--text-faint); }
+.dt-ignored-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: var(--font-ui-small);
+}
+.dt-ignored-cwd {
+  flex: 1; min-width: 0;
+  font-family: var(--font-monospace); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  direction: rtl; /* 长路径截头保尾：目录名在尾部 */
+  text-align: left;
+}
+.dt-ignored-row .pa-btn { flex: none; padding: 2px 10px; font-size: 12px; }
+
 

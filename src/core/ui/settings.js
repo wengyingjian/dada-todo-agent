@@ -4,6 +4,7 @@ import { TagColorModal } from './modals.js';
 import { countInboxTasks, migrateInboxTasks, loadAll, loadChecklists, collectTags } from '../api/tasks.js';
 import { setColorScheme, setWeekStart, tagColorOf, usedTagColors, EXTRA_SCHEME_OPTIONS, isImeKey } from '../composables/tasks-logic.js';
 import { VIEW_MENU_ITEMS, DEFAULT_MENU_VIEWS, reorderViews } from '../composables/viewMenu.js';
+import { unignoreWorkspace } from '../../project/runtime.js';
 
 // 自检新版：比对 GitHub 仓库 main 分支 manifest 的 version 与本地版本
 const UPDATE_REPO = 'Plover-PY/obsidian-DadaTodoList';
@@ -758,6 +759,34 @@ export class DadaTodoSettingTab extends PluginSettingTab {
             plugin.saveSettings();
           });
         });
+      }),
+      row('unmatchedPrompt', 'unmatchedPromptDesc', (s) => {
+        s.addToggle((tg) => {
+          tg.setValue(plugin.settings.project.unmatchedPrompt !== false);
+          tg.onChange(async (value) => {
+            plugin.settings.project.unmatchedPrompt = value;
+            await plugin.saveSettings();
+          });
+        });
+      }),
+      row('ignoredWorkspaces', 'ignoredWorkspacesDesc', (s) => {
+        const list = Array.isArray(plugin.settings.projectIgnoredWorkspaces)
+          ? plugin.settings.projectIgnoredWorkspaces : [];
+        const wrap = s.controlEl.createDiv('dt-ignored-workspaces');
+        if (!list.length) {
+          wrap.createDiv({ cls: 'dt-ignored-empty', text: T('ignoredWorkspacesEmpty') });
+        } else {
+          for (const cwd of list) {
+            const rowEl = wrap.createDiv('dt-ignored-row');
+            rowEl.createSpan({ cls: 'dt-ignored-cwd', text: cwd, attr: { title: cwd } });
+            const btn = rowEl.createEl('button', { cls: 'pa-btn', text: T('ignoredWorkspacesRemove') });
+            btn.addEventListener('click', async () => {
+              await unignoreWorkspace(plugin, cwd);
+              // 移除后整页重渲，列表即时更新
+              this.display();
+            });
+          }
+        }
       }),
       row('summaryMaxChars', 'summaryMaxCharsDesc', (s) => {
         s.addText((tx) => {

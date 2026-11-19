@@ -9,6 +9,8 @@ export const DEFAULT_SETTINGS = {
   reverseSync: true,
   reverseSyncSeconds: 60,
   reverseSyncMinMinutes: 3,
+  // 未知工作区（cwd 匹配不到项目）弹窗提醒：true=弹窗（每个 cwd 只提醒一次），false=静默写日记（旧行为）
+  unmatchedPrompt: true,
   summaryMaxChars: 200,
   // 委派总结 LLM（OpenAI 兼容 /v1/chat/completions；三项任一为空则不总结，回退截断行为）
   summaryLlmBaseUrl: '',

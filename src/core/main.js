@@ -9,7 +9,8 @@ import { setupHoverPreview, teardownHoverPreview } from './hoverPreview.js';
 import { DadaTodoSettingTab } from './ui/settings.js';
 import { ReminderService } from './services/reminder.js';
 import { mergeProjectSettings } from '../project/settings.js';
-import { syncOnce } from '../project/runtime.js';
+import { syncOnce, collectUnmatched, markUnmatchedNotified, ignoreWorkspace, createProjectWithCwd } from '../project/runtime.js';
+import UnmatchedWorkspaceModal from '../project/UnmatchedWorkspaceModal.vue';
 import { editorGripExtension } from '../project/editor-grip-ui.js';
 import '../project/editor-grip.css';
 import { initI18n, t } from './i18n/index.js';
@@ -123,6 +124,30 @@ export default class DadaTodoPlugin extends Plugin {
       const every = Math.max(15, Number((this.settings.project || {}).reverseSyncSeconds) || 60) * 1000;
       if (Date.now() - lastSyncAt >= every) syncTick();
     }, 15 * 1000));
+
+    // [project-view] 未知工作区提醒：syncOnce 扫到 cwd 匹配不到项目的会话时回调到这里。
+    // 去重（已提醒过的记 projectNotifiedWorkspaces）→ 过滤后仍有新 cwd 才弹窗；
+    // 弹窗内选「创建项目」（名称预填可改，自动写入 cwd）或「忽略工作区」（此后该 cwd 整条跳过）。
+    this.onUnmatchedWorkspaces = (cwds) => {
+      try {
+        const { items, newCwds } = collectUnmatched(this, cwds);
+        if (!items.length) return;
+        new VueModal(this.app, UnmatchedWorkspaceModal, {
+          open: true,
+          items,
+          onCreate: async ({ name, cwd }) => {
+            const r = await createProjectWithCwd(this, name, cwd);
+            return r;
+          },
+          onIgnore: async ({ cwd }) => {
+            await ignoreWorkspace(this, cwd);
+          },
+          onNotified: () => { markUnmatchedNotified(this, newCwds); }
+        }, { width: '520px' }).open();
+      } catch (e) {
+        console.warn('[DadaAgent] 未知工作区提醒失败：', e);
+      }
+    };
 
     this.addRibbonIcon(ribbonIcon, t('app.openDada'), () => this.activateView());
 
@@ -280,6 +305,10 @@ export default class DadaTodoPlugin extends Plugin {
         if (!p.syncSince) p.syncSince = Date.now() - 30 * 60000;
         return p;
       })(),
+      // [project-view] 反向同步的忽略 / 提醒记录（数组持久化；此前漏透传导致重启丢失，一并补上）
+      projectIgnoredThreads: Array.isArray(data.projectIgnoredThreads) ? data.projectIgnoredThreads : [],
+      projectIgnoredWorkspaces: Array.isArray(data.projectIgnoredWorkspaces) ? data.projectIgnoredWorkspaces : [],
+      projectNotifiedWorkspaces: Array.isArray(data.projectNotifiedWorkspaces) ? data.projectNotifiedWorkspaces : [],
       // 任务到点提醒总开关：默认关（避免更新后对所有任务突然弹通知），开启后即时生效并自带提示音
       remindEnabled: data.remindEnabled === true,
       // 提醒通道：system=系统通知（桌面端，需授权，不可用自动回落）/ in-app=只用 Obsidian 内提示

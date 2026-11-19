@@ -9,7 +9,7 @@ import {
 } from './index.js';
 import { isArchiveFile, pickArchiveFile } from './archive.js';
 import { extractDelegations, formatDelegationLine, parseDelegationLine, planDelegationInsert, T3_MARK } from './delegate-line.js';
-import { queryThreads, chooseOwner, threadTitleOf } from './reverse-sync.js';
+import { queryThreads, chooseOwner, threadTitleOf, classifyWorkspace, collectUnmatched } from './reverse-sync.js';
 import { summarize, summarizeThread } from './delegate.js';
 import { shouldResummarize } from './summarize-llm.js';
 import { replaceSummaryInLines, locateDelegationLine } from './summarize-apply.js';
@@ -385,6 +385,9 @@ export async function syncOnce(plugin) {
   const idx = scanProjects(plugin);
   const map = await rebuildDelegationMap(plugin);
   const ignored = new Set((plugin.settings && plugin.settings.projectIgnoredThreads) || []);
+  const ignoredWorkspaces = (plugin.settings && plugin.settings.projectIgnoredWorkspaces) || [];
+  // 本轮扫到的未知工作区（cwd 去重）：同步结束后弹窗提醒
+  const unmatched = new Set();
   // 0 表示立刻同步：不能用 `|| 3`，否则 0 会被当成未设置而回落到 3 分钟
   const rawMin = Number(s.reverseSyncMinMinutes);
   const minAge = Math.max(0, Number.isFinite(rawMin) ? rawMin : 3) * 60000;
@@ -417,14 +420,17 @@ export async function syncOnce(plugin) {
     if (ignored.has(t.threadId)) continue;
     if (now - t.createdAt < minAge) continue;
 
-    const owner = chooseOwner(t.cwd, idx.nodes);
+    const cls = classifyWorkspace(t.cwd, idx.nodes, ignoredWorkspaces);
+    if (cls.type === 'ignored') continue;
     let filePath;
     let dirPath;
-    if (owner) {
-      await ensureProjectFile(plugin, owner.node);
-      filePath = owner.node.filePath;
-      dirPath = owner.node.dirPath;
+    if (cls.type === 'project') {
+      await ensureProjectFile(plugin, cls.node);
+      filePath = cls.node.filePath;
+      dirPath = cls.node.dirPath;
     } else {
+      // 未知工作区：弹窗提醒（每个 cwd 只提一次，见 collectUnmatched），本轮仍写当天日记兜底
+      if (s.unmatchedPrompt !== false && t.cwd) unmatched.add(t.cwd);
       filePath = journalPathFor(plugin, todayKeyLocal());
       if (!filePath) continue;
       dirPath = filePath.split('/').slice(0, -1).join('/');
@@ -438,6 +444,10 @@ export async function syncOnce(plugin) {
       threadId: t.threadId
     });
     created += 1;
+  }
+  // 未知工作区提醒：回调弹窗由 main 层注入，runtime 不碰 Obsidian UI；失败不影响同步结果
+  if (unmatched.size && typeof plugin.onUnmatchedWorkspaces === 'function') {
+    try { plugin.onUnmatchedWorkspaces(Array.from(unmatched)); } catch { /* 提醒失败不阻塞 */ }
   }
   return { created, updated };
 }
@@ -481,4 +491,60 @@ export async function ignoreThread(plugin, threadId) {
   list.add(threadId);
   plugin.settings.projectIgnoredThreads = Array.from(list);
   await plugin.saveData(plugin.settings);
+}
+
+// ---------- 未知工作区弹窗提醒 ----------
+
+// 去重过滤（纯函数在 reverse-sync.js）；落盘与列表增删在此
+export { collectUnmatched };
+
+export async function markUnmatchedNotified(plugin, cwds) {
+  const list = new Set((plugin.settings && plugin.settings.projectNotifiedWorkspaces) || []);
+  for (const c of cwds || []) list.add(normalizeCwd(c));
+  plugin.settings.projectNotifiedWorkspaces = Array.from(list);
+  await plugin.saveData(plugin.settings);
+}
+
+export async function removeNotifiedWorkspace(plugin, cwd) {
+  const target = normalizeCwd(cwd);
+  const list = new Set((plugin.settings && plugin.settings.projectNotifiedWorkspaces) || []);
+  list.delete(target);
+  plugin.settings.projectNotifiedWorkspaces = Array.from(list);
+  await plugin.saveData(plugin.settings);
+}
+
+export async function ignoreWorkspace(plugin, cwd) {
+  const v = normalizeCwd(cwd);
+  if (!v) return { ok: false, reason: 'empty' };
+  const list = new Set((plugin.settings && plugin.settings.projectIgnoredWorkspaces) || []);
+  list.add(v);
+  plugin.settings.projectIgnoredWorkspaces = Array.from(list);
+  await plugin.saveData(plugin.settings);
+  // 忽略即不再提醒：同步清除已提醒记录
+  await removeNotifiedWorkspace(plugin, v);
+  return { ok: true };
+}
+
+export async function unignoreWorkspace(plugin, cwd) {
+  const target = normalizeCwd(cwd);
+  const list = new Set((plugin.settings && plugin.settings.projectIgnoredWorkspaces) || []);
+  list.delete(target);
+  plugin.settings.projectIgnoredWorkspaces = Array.from(list);
+  await plugin.saveData(plugin.settings);
+}
+
+// 按预设名创建项目并把 cwd 写进 frontmatter；名称冲突时自动加后缀 -2 / -3 …
+export async function createProjectWithCwd(plugin, name, cwd) {
+  const root = rootOf(plugin);
+  const base = String(name || '').trim() || '未命名项目';
+  let dirPath = `${root}/${base}`;
+  for (let i = 2; plugin.app.vault.getAbstractFileByPath(dirPath); i++) dirPath = `${root}/${base}-${i}`;
+  const finalName = dirPath.split('/').pop();
+  const r = await createProject(plugin, '', finalName);
+  if (!r || !r.ok) return r;
+  const node = nodeOf(plugin, r.dirPath);
+  if (!node) return { ok: false, reason: 'no_node' };
+  const cw = await setProjectCwd(plugin, node, cwd);
+  if (!cw || !cw.ok) return { ok: false, reason: 'cwd_failed' };
+  return { ok: true, dirPath: r.dirPath, filePath: r.filePath };
 }

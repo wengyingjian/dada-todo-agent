@@ -76,6 +76,37 @@ export function chooseOwner(cwd, nodes) {
   return node ? { type: 'project', node } : null;
 }
 
+// 归属分类：'project'（命中项目）/ 'ignored'（cwd 命中已忽略工作区，整条跳过）/ 'unknown'（无匹配）。
+// 项目命中优先于忽略列表（忽略父目录时子目录仍可建项目）；忽略判断与 matchProjectByCwd
+// 同口径：相等或以 `<忽略项>/` 开头（两侧都去掉尾斜杠再比）。
+export function classifyWorkspace(cwd, nodes, ignored) {
+  const owner = chooseOwner(cwd, nodes);
+  if (owner) return owner;
+  const target = String(cwd || '').trim().replace(/\/+$/, '');
+  for (const ig of ignored || []) {
+    const n = String(ig || '').trim().replace(/\/+$/, '');
+    if (!n) continue;
+    if (target === n || target.startsWith(n + '/')) return { type: 'ignored' };
+  }
+  return { type: 'unknown' };
+}
+
+// 未知工作区提醒的去重过滤（纯函数，落盘见 runtime.markUnmatchedNotified）：
+// 过滤出「首次见到」的 cwd，返回弹窗条目 [{ cwd, name }] 与待记入的 newCwds
+export function collectUnmatched(cwds, notified) {
+  const seen = new Set(notified || []);
+  const items = [];
+  const newCwds = [];
+  for (const raw of cwds || []) {
+    const cwd = String(raw || '').trim().replace(/\/+$/, '');
+    if (!cwd || seen.has(cwd)) continue;
+    seen.add(cwd);
+    newCwds.push(cwd);
+    items.push({ cwd, name: cwd.split('/').pop() || cwd });
+  }
+  return { items, newCwds };
+}
+
 // 只读查询：返回线程数组；任何失败都返回空数组（调用方记日志，不弹窗）
 export async function queryThreads(dbPath, sinceMs, { execFile } = {}) {
   const run = execFile || nodeExecFile;
