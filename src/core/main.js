@@ -9,7 +9,7 @@ import { setupHoverPreview, teardownHoverPreview } from './hoverPreview.js';
 import { DadaTodoSettingTab } from './ui/settings.js';
 import { ReminderService } from './services/reminder.js';
 import { mergeProjectSettings } from '../project/settings.js';
-import { syncOnce, collectUnmatched, markUnmatchedNotified, ignoreWorkspace, createProjectWithCwd } from '../project/runtime.js';
+import { syncOnce, collectUnmatched, markUnmatchedNotified, ignoreWorkspace, keepJournalWorkspace, createProjectWithCwd } from '../project/runtime.js';
 import UnmatchedWorkspaceModal from '../project/UnmatchedWorkspaceModal.vue';
 import { editorGripExtension } from '../project/editor-grip-ui.js';
 import '../project/editor-grip.css';
@@ -127,7 +127,7 @@ export default class DadaTodoPlugin extends Plugin {
 
     // [project-view] 未知工作区提醒：syncOnce 扫到 cwd 匹配不到项目的会话时回调到这里。
     // 去重（已提醒过的记 projectNotifiedWorkspaces）→ 过滤后仍有新 cwd 才弹窗；
-    // 弹窗内选「创建项目」（名称预填可改，自动写入 cwd）或「忽略工作区」（此后该 cwd 整条跳过）。
+    // 弹窗三选一：创建项目（可勾选同时导入历史会话+搬回日记里的委派块）/ 忽略工作区 / 放入日记。
     this.onUnmatchedWorkspaces = (cwds) => {
       try {
         // 签名：(cwds, notified)——collectUnmatched 是纯函数，不收 plugin
@@ -136,15 +136,18 @@ export default class DadaTodoPlugin extends Plugin {
         new VueModal(this.app, UnmatchedWorkspaceModal, {
           open: true,
           items,
-          onCreate: async ({ name, cwd }) => {
-            const r = await createProjectWithCwd(this, name, cwd);
+          onCreate: async ({ name, cwd, importHistory }) => {
+            const r = await createProjectWithCwd(this, name, cwd, { importHistory });
             return r;
           },
           onIgnore: async ({ cwd }) => {
             await ignoreWorkspace(this, cwd);
           },
+          onJournal: async ({ cwd }) => {
+            await keepJournalWorkspace(this, cwd);
+          },
           onNotified: () => { markUnmatchedNotified(this, newCwds); }
-        }, { width: '520px' }).open();
+        }, { width: '560px' }).open();
       } catch (e) {
         console.warn('[DadaAgent] 未知工作区提醒失败：', e);
       }

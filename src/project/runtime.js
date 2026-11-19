@@ -9,6 +9,7 @@ import {
 } from './index.js';
 import { isArchiveFile, pickArchiveFile } from './archive.js';
 import { extractDelegations, formatDelegationLine, parseDelegationLine, planDelegationInsert, T3_MARK } from './delegate-line.js';
+
 import { queryThreads, chooseOwner, threadTitleOf, classifyWorkspace, collectUnmatched } from './reverse-sync.js';
 import { summarize, summarizeThread } from './delegate.js';
 import { shouldResummarize } from './summarize-llm.js';
@@ -386,8 +387,8 @@ export async function syncOnce(plugin) {
   const map = await rebuildDelegationMap(plugin);
   const ignored = new Set((plugin.settings && plugin.settings.projectIgnoredThreads) || []);
   const ignoredWorkspaces = (plugin.settings && plugin.settings.projectIgnoredWorkspaces) || [];
-  // 本轮扫到的未知工作区（cwd 去重）：同步结束后弹窗提醒
-  const unmatched = new Set();
+  // 本轮扫到的未知工作区（cwd → 会话数）：同步结束后弹窗提醒
+  const unmatched = new Map();
   // 0 表示立刻同步：不能用 `|| 3`，否则 0 会被当成未设置而回落到 3 分钟
   const rawMin = Number(s.reverseSyncMinMinutes);
   const minAge = Math.max(0, Number.isFinite(rawMin) ? rawMin : 3) * 60000;
@@ -421,7 +422,7 @@ export async function syncOnce(plugin) {
           const dir = String(loc.filePath || '').replace(/\/[^/]*$/, '');
           return dir === rootOf(plugin) || dir.startsWith(rootOf(plugin) + '/');
         });
-        if (!inProject) unmatched.add(t.cwd);
+        if (!inProject) unmatched.set(t.cwd, (unmatched.get(t.cwd) || 0) + 1);
       }
       void newest;
       continue;
@@ -439,7 +440,7 @@ export async function syncOnce(plugin) {
       dirPath = cls.node.dirPath;
     } else {
       // 未知工作区：弹窗提醒（每个 cwd 只提一次，见 collectUnmatched），本轮仍写当天日记兜底
-      if (s.unmatchedPrompt !== false && t.cwd) unmatched.add(t.cwd);
+      if (s.unmatchedPrompt !== false && t.cwd) unmatched.set(t.cwd, (unmatched.get(t.cwd) || 0) + 1);
       filePath = journalPathFor(plugin, todayKeyLocal());
       if (!filePath) continue;
       dirPath = filePath.split('/').slice(0, -1).join('/');
@@ -456,7 +457,7 @@ export async function syncOnce(plugin) {
   }
   // 未知工作区提醒：回调弹窗由 main 层注入，runtime 不碰 Obsidian UI；失败不影响同步结果
   if (unmatched.size && typeof plugin.onUnmatchedWorkspaces === 'function') {
-    try { plugin.onUnmatchedWorkspaces(Array.from(unmatched)); } catch { /* 提醒失败不阻塞 */ }
+    try { plugin.onUnmatchedWorkspaces(Array.from(unmatched, ([cwd, count]) => ({ cwd, count }))); } catch { /* 提醒失败不阻塞 */ }
   }
   return { created, updated };
 }
@@ -502,6 +503,109 @@ export async function ignoreThread(plugin, threadId) {
   await plugin.saveData(plugin.settings);
 }
 
+// ---------- 历史会话导入与搬回 ----------
+
+// 全量扫描 T3 库（不限 24 小时窗口），把属于该项目 cwd 的、尚未绑定在任何文件里的
+// 会话导入为「任务 + 委派子行」。返回 { imported, skipped }。
+export async function importThreadsToProject(plugin, node) {
+  if (!node || !node.dirPath) return { imported: 0, skipped: 0, reason: 'no_node' };
+  await ensureProjectFile(plugin, node);
+  const s = projectSettings(plugin);
+  const maxChars = Number(s.summaryMaxChars) || 200;
+  // 全量：syncSince=0 且窗口开到库最早（buildScanSql 只按 created_at >= floor 过滤）
+  const threads = await queryThreads(t3DbPath(), 0).catch(() => []);
+  const map = await rebuildDelegationMap(plugin);
+  const ignoredWs = (plugin.settings && plugin.settings.projectIgnoredWorkspaces) || [];
+  const targetCwd = normalizeCwd(node.cwd || '');
+  if (!targetCwd) return { imported: 0, skipped: 0, reason: 'no_cwd' };
+
+  let imported = 0;
+  let skipped = 0;
+  for (const t of threads) {
+    // 只导入 cwd 落在本项目下的会话（与同步同口径：相等或子目录）
+    const c = normalizeCwd(t.cwd);
+    if (!c || !(c === targetCwd || c.startsWith(targetCwd + '/'))) { skipped += 1; continue; }
+    if (map.get(t.threadId)) { skipped += 1; continue; }
+    const ignoredList = new Set((plugin.settings && plugin.settings.projectIgnoredThreads) || []);
+    if (ignoredList.has(t.threadId)) { skipped += 1; continue; }
+    for (const ig of ignoredWs) {
+      const n = String(ig || '').trim().replace(/\/+$/, '');
+      if (n && (c === n || c.startsWith(n + '/'))) { skipped += 1; continue; }
+    }
+    const key = listKeyOf(node.filePath);
+    const r = unwrap(await API.createChecklistTask(key, '', { summary: threadTitleOf(t) }));
+    if (!r || !r.ok) { skipped += 1; continue; }
+    await appendDelegation(plugin, node, r.task.lineNo, {
+      state: t.state || 'completed',
+      summary: summaryOfThread(t, maxChars),
+      threadId: t.threadId
+    });
+    imported += 1;
+  }
+  return { imported, skipped };
+}
+
+// 搬回：把绑定在本项目 cwd 会话、却落在项目文件之外的委派块（典型是日记兜底）整体
+// 剪切进项目任务文件——父任务行 + 子行 + 总结描述行一起搬，日记里删干净。
+// 返回 { moved, files: [被清理的文件路径] }
+export async function moveDelegationsToProject(plugin, node) {
+  if (!node || !node.filePath) return { moved: 0, files: [], reason: 'no_node' };
+  const targetCwd = normalizeCwd(node.cwd || '');
+  if (!targetCwd) return { moved: 0, files: [], reason: 'no_cwd' };
+
+  // cwd → threadId 集合（全量查一次）
+  const threads = await queryThreads(t3DbPath(), 0).catch(() => []);
+  const wanted = new Set(threads
+    .filter((t) => {
+      const c = normalizeCwd(t.cwd);
+      return c && (c === targetCwd || c.startsWith(targetCwd + '/'));
+    })
+    .map((t) => t.threadId));
+  if (!wanted.size) return { moved: 0, files: [] };
+
+  const root = rootOf(plugin);
+  const inProjectRoot = (p) => p === root || p.startsWith(root + '/');
+  const map = await rebuildDelegationMap(plugin);
+  const filePaths = new Set();
+  for (const [threadId, locs] of map.entries()) {
+    if (!wanted.has(threadId)) continue;
+    for (const loc of locs) {
+      if (!inProjectRoot(loc.filePath)) filePaths.add(loc.filePath);
+    }
+  }
+  if (!filePaths.size) return { moved: 0, files: [] };
+
+  const movedTargets = [];
+  const cleanedFiles = [];
+  for (const srcPath of filePaths) {
+    const f = plugin.app.vault.getAbstractFileByPath(srcPath);
+    if (!(f instanceof TFile)) continue;
+    const { head, lines } = splitFile(await plugin.app.vault.read(f));
+    // 收集要搬的顶层任务块：块内任一行是目标 threadId 的委派子行 → 整块搬
+    const blocks = taskBlocks(lines).filter((b) =>
+      lines.slice(b.start, b.end).some((l) => {
+        const d = parseDelegationLine(l);
+        return d && d.threadId && wanted.has(d.threadId);
+      }));
+    if (!blocks.length) continue;
+    const removed = new Set();
+    for (const b of blocks) {
+      for (let i = b.start; i < b.end; i++) { movedTargets.push(lines[i]); removed.add(i); }
+    }
+    const kept = lines.filter((_, i) => !removed.has(i));
+    await plugin.app.vault.modify(f, joinFile(head, kept).replace(/\s+$/, '') + '\n');
+    cleanedFiles.push(srcPath);
+  }
+  if (!movedTargets.length) return { moved: 0, files: [] };
+
+  // 追加到项目任务文件尾部（保留 frontmatter）
+  const tf = plugin.app.vault.getAbstractFileByPath(node.filePath);
+  if (!(tf instanceof TFile)) return { moved: 0, files: [], reason: 'no_file' };
+  const raw = String(await plugin.app.vault.read(tf)).replace(/\s+$/, '');
+  await plugin.app.vault.modify(tf, raw + '\n\n' + movedTargets.join('\n') + '\n');
+  return { moved: movedTargets.filter((l) => /^- \[[ xX/-]\]/.test(l)).length, files: cleanedFiles };
+}
+
 // ---------- 未知工作区弹窗提醒 ----------
 
 // 去重过滤（纯函数在 reverse-sync.js）；落盘与列表增删在此
@@ -534,6 +638,13 @@ export async function ignoreWorkspace(plugin, cwd) {
   return { ok: true };
 }
 
+// 「放入日记，不再提醒」：不建项目也不忽略，只是把这个 cwd 记入已提醒，
+// 之后该 cwd 的会话静默走日记兜底（想重新弹提醒可在 data.json 清 projectNotifiedWorkspaces）
+export async function keepJournalWorkspace(plugin, cwd) {
+  await markUnmatchedNotified(plugin, [cwd]);
+  return { ok: true };
+}
+
 export async function unignoreWorkspace(plugin, cwd) {
   const target = normalizeCwd(cwd);
   const list = new Set((plugin.settings && plugin.settings.projectIgnoredWorkspaces) || []);
@@ -543,7 +654,8 @@ export async function unignoreWorkspace(plugin, cwd) {
 }
 
 // 按预设名创建项目并把 cwd 写进 frontmatter；名称冲突时自动加后缀 -2 / -3 …
-export async function createProjectWithCwd(plugin, name, cwd) {
+// opts.importHistory 为真时：全量导入该项目 cwd 的历史会话 + 把落在日记的委派块搬回来
+export async function createProjectWithCwd(plugin, name, cwd, opts = {}) {
   const root = rootOf(plugin);
   const base = String(name || '').trim() || '未命名项目';
   let dirPath = `${root}/${base}`;
@@ -555,5 +667,13 @@ export async function createProjectWithCwd(plugin, name, cwd) {
   if (!node) return { ok: false, reason: 'no_node' };
   const cw = await setProjectCwd(plugin, node, cwd);
   if (!cw || !cw.ok) return { ok: false, reason: 'cwd_failed' };
-  return { ok: true, dirPath: r.dirPath, filePath: r.filePath };
+  let imported = 0;
+  let moved = 0;
+  if (opts.importHistory) {
+    const imp = await importThreadsToProject(plugin, node);
+    imported = imp.imported;
+    const mv = await moveDelegationsToProject(plugin, node);
+    moved = mv.moved;
+  }
+  return { ok: true, dirPath: r.dirPath, filePath: r.filePath, imported, moved };
 }

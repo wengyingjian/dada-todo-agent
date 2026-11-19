@@ -25,6 +25,8 @@
         <div v-if="activeNode" class="pa-cwd" :title="activeNode.cwd">{{ activeNode.cwd || '未设置 cwd（继承父级或默认）' }}</div>
         <div class="pa-head-actions">
           <button class="pa-btn" @click="archiveDone" :disabled="!doneCount">归档已完成</button>
+          <button class="pa-btn" @click="importHistory" :disabled="importing" :title="'全量导入该项目 cwd 的历史会话，并把日记里的委派块搬回来'">
+            {{ importing ? '导入中…' : '导入历史会话' }}</button>
           <button class="pa-btn" @click="showSessions = !showSessions">{{ showSessions ? '隐藏会话' : '显示会话' }}</button>
         </div>
       </header>
@@ -128,6 +130,7 @@ export default {
       showTree: false,
       askState: null,
       askRefs: {},
+      importing: false,
       refreshing: false
     };
   },
@@ -291,6 +294,27 @@ export default {
       if (!r || !r.ok) new Notice('归档失败：' + (r && r.reason || 'unknown'));
       else if (r.archivePath) new Notice(`已归档 ${r.moved} 条 → ${r.archivePath.split('/').pop()}`);
       await this.refresh();
+    },
+    // 全量导入历史会话：T3 库里 cwd 属于本项目的未绑定会话 → 任务+委派行；
+    // 同时把落在日记等文件里的委派块搬回来（项目文件之外）
+    async importHistory() {
+      const node = this.activeNode;
+      if (!node) return;
+      if (!String(node.cwd || '').trim()) { new Notice('请先为项目设置 cwd'); return; }
+      this.importing = true;
+      try {
+        const imp = await rt.importThreadsToProject(this.plugin, node);
+        const mv = await rt.moveDelegationsToProject(this.plugin, node);
+        const parts = [];
+        if (imp.imported) parts.push(`导入 ${imp.imported} 条`);
+        if (mv.moved) parts.push(`搬回 ${mv.moved} 条`);
+        new Notice(parts.length ? parts.join('，') : '没有可导入的历史会话');
+      } catch (e) {
+        new Notice('导入失败：' + String((e && e.message) || e));
+      } finally {
+        this.importing = false;
+        await this.refresh();
+      }
     },
     openDelegate(task) {
       const node = this.activeNode;

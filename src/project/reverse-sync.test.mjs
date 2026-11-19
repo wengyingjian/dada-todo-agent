@@ -67,12 +67,13 @@ test('归属分类：ignored 命中（含子目录）优先于 unknown，但让�
   assert.equal(classifyWorkspace('/tmp/x', idx.nodes, ['/tmp/ ']).type, 'ignored');
 });
 
-// collectUnmatched：去重、空 cwd 过滤、名称取 basename
+// collectUnmatched：去重、空 cwd 过滤、名称取 basename、count 透传（兼容纯字符串项）
 test('未知工作区去重：首次见到的才进弹窗', () => {
-  const r1 = collectUnmatched(['/repos/a', '/repos/a/', ' ', '/repos/b'], []);
-  assert.deepEqual(r1.items.map((x) => x.cwd), ['/repos/a', '/repos/b']);
-  assert.deepEqual(r1.newCwds, ['/repos/a', '/repos/b']);
+  const r1 = collectUnmatched(['/repos/a', '/repos/a/', ' ', '/repos/b', { cwd: '/repos/c', count: 3 }], []);
+  assert.deepEqual(r1.items.map((x) => x.cwd), ['/repos/a', '/repos/b', '/repos/c']);
+  assert.deepEqual(r1.newCwds, ['/repos/a', '/repos/b', '/repos/c']);
   assert.equal(r1.items[0].name, 'a');
+  assert.equal(r1.items[2].count, 3);
   // 已提醒过的不再出现
   const r2 = collectUnmatched(['/repos/a', '/repos/c'], ['/repos/a']);
   assert.deepEqual(r2.items.map((x) => x.cwd), ['/repos/c']);

@@ -92,17 +92,19 @@ export function classifyWorkspace(cwd, nodes, ignored) {
 }
 
 // 未知工作区提醒的去重过滤（纯函数，落盘见 runtime.markUnmatchedNotified）：
-// 过滤出「首次见到」的 cwd，返回弹窗条目 [{ cwd, name }] 与待记入的 newCwds
+// cwds 是 [{ cwd, count }]（count 为本轮该 cwd 的会话数，缺省 0），
+// 过滤出「首次见到」的条目，返回弹窗条目 [{ cwd, name, count }] 与待记入的 newCwds
 export function collectUnmatched(cwds, notified) {
   const seen = new Set(notified || []);
   const items = [];
   const newCwds = [];
   for (const raw of cwds || []) {
-    const cwd = String(raw || '').trim().replace(/\/+$/, '');
+    const cwd = String(typeof raw === 'string' ? raw : (raw && raw.cwd) || '').trim().replace(/\/+$/, '');
+    const count = (typeof raw === 'object' && raw && Number(raw.count)) || 0;
     if (!cwd || seen.has(cwd)) continue;
     seen.add(cwd);
     newCwds.push(cwd);
-    items.push({ cwd, name: cwd.split('/').pop() || cwd });
+    items.push({ cwd, name: cwd.split('/').pop() || cwd, count });
   }
   return { items, newCwds };
 }
