@@ -793,6 +793,31 @@ export class DadaTodoSettingTab extends PluginSettingTab {
           });
         });
       }),
+      row('journalWorkspaces', 'journalWorkspacesDesc', (s) => {
+        s.addTextArea((tx) => {
+          tx.inputEl.rows = 3;
+          tx.inputEl.style.width = '100%';
+          tx.inputEl.addClass('dt-ignored-textarea');
+          // 「放入日记/关闭弹窗」后不再提醒的 cwd，同样 ; 分隔可编辑：
+          // 从这里删掉即可让该工作区下次重新弹提醒
+          const list = Array.isArray(plugin.settings.projectNotifiedWorkspaces)
+            ? plugin.settings.projectNotifiedWorkspaces : [];
+          tx.setValue(list.join(';'));
+          let committed = list.join(';');
+          tx.onChange(async (value) => {
+            const next = Array.from(new Set(
+              String(value || '').split(';')
+                .map((x) => x.trim().replace(/\/+$/, ''))
+                .filter(Boolean)
+            ));
+            const joined = next.join(';');
+            if (joined === committed) return;
+            committed = joined;
+            plugin.settings.projectNotifiedWorkspaces = next;
+            await plugin.saveSettings();
+          });
+        });
+      }),
       row('summaryMaxChars', 'summaryMaxCharsDesc', (s) => {
         s.addText((tx) => {
           tx.setValue(String(plugin.settings.project.summaryMaxChars || 200));
