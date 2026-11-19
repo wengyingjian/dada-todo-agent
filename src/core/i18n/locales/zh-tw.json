@@ -389,7 +389,12 @@
     "t3Provider": "T3 Code 提供方",
     "t3ProviderDesc": "委派時傳給 T3 Code 的提供方 id。留空用專案的預設模型；新建的 T3 專案沒有預設模型時需要填。",
     "t3Model": "T3 Code 模型",
-    "t3ModelDesc": "委派時使用的模型 id。留空用專案的預設模型；新建的 T3 專案沒有預設模型時需要填。"
+    "t3ModelDesc": "委派時使用的模型 id。留空用專案的預設模型；新建的 T3 專案沒有預設模型時需要填。",
+    "tabTodo": "待辦清單",
+    "tabAgent": "Agent 委派",
+    "summaryPromptTemplate": "總結 system prompt 模板",
+    "summaryPromptTemplateDesc": "留空使用內建預設。支援佔位符 {{delegation}}（委派任務描述）與 {{transcript}}（完整會話記錄）：模板含 {{transcript}} 時整段接管 user 訊息，否則只替換 system 段。",
+    "summaryPromptTemplatePlaceholder": "留空使用內建預設。範例：你是專案週報助手…\n標題: …\n1. …\n會話記錄：{{transcript}}"
   },
   "modals": {
     "linkAdd": "新增連結",

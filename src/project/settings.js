@@ -16,6 +16,9 @@ export const DEFAULT_SETTINGS = {
   summaryLlmBaseUrl: '',
   summaryLlmModel: '',
   summaryLlmApiKey: '',
+  // 总结 system prompt 模板（留空用内置默认；支持 {{delegation}} / {{transcript}} 占位符，
+  // 含 {{transcript}} 时整段模板接管 user 消息）
+  summaryPromptTemplate: '',
   summaryTimeoutSeconds: 30,
   // 会话静默多少分钟后才允许「再总结」（与 #count 计数变化双门槛）
   summarySilentMinutes: 30,

@@ -220,4 +220,35 @@
   resize: vertical;
 }
 
+/* 设置页 Tab 导航（对齐 Agent Deck ad-set-tab：底部横排、下划线高亮当前 tab） */
+.dt-set-tabs {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: 8px;
+  padding-top: 4px;
+}
+.dt-set-tab {
+  appearance: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  padding: 10px 0 12px;
+  height: auto;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dt-set-tab:hover { color: var(--text-normal); background: transparent; }
+.dt-set-tab.is-on {
+  color: var(--text-normal);
+  border-bottom-color: var(--interactive-accent);
+}
+/* prompt 模板文本域等宽字体 */
+.dt-prompt-textarea { font-family: var(--font-monospace); font-size: 12px; resize: vertical; }
+
 

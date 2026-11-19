@@ -395,7 +395,12 @@
     "t3Provider": "T3 Code provider",
     "t3ProviderDesc": "Provider id passed to T3 Code when delegating. Leave empty to use the project default; required for projects without a default model.",
     "t3Model": "T3 Code model",
-    "t3ModelDesc": "Model id used when delegating. Leave empty to use the project default; required for projects without a default model."
+    "t3ModelDesc": "Model id used when delegating. Leave empty to use the project default; required for projects without a default model.",
+    "tabTodo": "Todo List",
+    "tabAgent": "Agent Delegation",
+    "summaryPromptTemplate": "Summary system prompt template",
+    "summaryPromptTemplateDesc": "Leave empty for the built-in default. Supports placeholders {{delegation}} (task description) and {{transcript}} (full session record): a template containing {{transcript}} takes over the whole user message; otherwise only the system segment is replaced.",
+    "summaryPromptTemplatePlaceholder": "Leave empty for default. Example: You are a project report assistant…\nTitle: …\n1. …\nSession record: {{transcript}}"
   },
   "modals": {
     "linkAdd": "Add link",

@@ -43,23 +43,43 @@ export function buildTranscript(msgs, { maxChars = 24000 } = {}) {
 
 // ---------- prompt 构建 ----------
 
-export function buildSummaryPrompt(delegationPrompt, transcript) {
-  const system = [
-    '你是任务总结助手。根据一次 AI 委派会话的完整对话记录，产出一个简明总结。',
-    '输出格式（严格遵守，不要多余开场白）：',
-    '标题: <一句话概括这次委派做了什么，不超过 30 字>',
-    '1. <要点一>',
-    '2. <要点二>',
-    '...',
-    '要求：分点不超过 5 点，每点一行、一句话；只总结实际完成/讨论的内容，不要臆测。'
-  ].join('\n');
+export const DEFAULT_SUMMARY_SYSTEM = [
+  '你是任务总结助手。根据一次 AI 委派会话的完整对话记录，产出一个简明总结。',
+  '输出格式（严格遵守，不要多余开场白）：',
+  '标题: <一句话概括这次委派做了什么，不超过 30 字>',
+  '1. <要点一>',
+  '2. <要点二>',
+  '...',
+  '要求：分点不超过 5 点，每点一行、一句话；只总结实际完成/讨论的内容，不要臆测。'
+].join('\n');
+
+// settings.summaryPromptTemplate（用户自定义）覆盖 system 段；
+// 支持占位符 {{delegation}} / {{transcript}}——出现则整段（含 user 结构）由模板接管，
+// 否则模板只替换 system，user 段保持默认结构。
+export function buildSummaryPrompt(delegationPrompt, transcript, template = '') {
+  const tpl = String(template || '').trim();
+  if (tpl) {
+    const fill = (s) => String(s)
+      .replace(/\{\{\s*delegation\s*\}\}/g, String(delegationPrompt || ''))
+      .replace(/\{\{\s*transcript\s*\}\}/g, String(transcript || ''));
+    if (/\{\{\s*transcript\s*\}\}/.test(tpl)) {
+      return { system: fill(tpl), user: '' };
+    }
+    const user = [
+      `委派时的任务描述：${String(delegationPrompt || '').slice(0, 500)}`,
+      '',
+      '完整会话记录：',
+      String(transcript || '')
+    ].join('\n');
+    return { system: fill(tpl), user };
+  }
   const user = [
     `委派时的任务描述：${String(delegationPrompt || '').slice(0, 500)}`,
     '',
     '完整会话记录：',
     String(transcript || '')
   ].join('\n');
-  return { system, user };
+  return { system: DEFAULT_SUMMARY_SYSTEM, user };
 }
 
 // ---------- 响应解析 ----------

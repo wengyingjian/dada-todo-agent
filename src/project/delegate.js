@@ -224,7 +224,7 @@ export async function summarizeThread(plugin, { threadId, dbPath, settings, dele
     if (!msgs.length) return null;
     const promptCount = countUserPrompts(msgs);
     const transcript = buildTranscript(msgs, { maxChars: 24000 });
-    const { system, user } = buildSummaryPrompt(delegationPrompt, transcript);
+    const { system, user } = buildSummaryPrompt(delegationPrompt, transcript, settings.summaryPromptTemplate);
     return callSummaryLlm({
       baseUrl: settings.summaryLlmBaseUrl,
       model: settings.summaryLlmModel,

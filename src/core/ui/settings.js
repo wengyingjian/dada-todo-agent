@@ -96,6 +96,70 @@ export class DadaTodoSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
+    // 设置页双 Tab（对齐 Agent Deck 视觉）：'todo' 待办清单 / 'agent' Agent 委派
+    this.tab = 'todo';
+  }
+
+  // Tab 导航行：plainBlock 渲染一排 tab 按钮。
+  // 声明式 API 下宿主会缓存 defs（this.display() 不触发重渲），所以 tab 切换不走
+  // defs 过滤，而是直接对 DOM 生效：按组标题给 .setting-group 打 data-dada-tab，
+  // 点击时显示/隐藏对应组（关于组恒显示）。
+  static TAB_GROUP_KEYS = {
+    todo: ['面板与外观', '日记设置', '收件箱与清单', '视图与日程', '提醒', '任务标记', '标签设置'],
+    agent: ['项目与委派']
+  };
+
+  applyTabVisibility(root) {
+    if (!root) return;
+    const groups = root.querySelectorAll('.setting-group');
+    for (const g of groups) {
+      const head = g.querySelector('.setting-item-name');
+      const title = head ? head.textContent.trim() : '';
+      let tab = null;
+      for (const [id, keys] of Object.entries(DadaTodoSettingTab.TAB_GROUP_KEYS)) {
+        if (keys.includes(title)) { tab = id; break; }
+      }
+      if (!tab) continue; // 导航行 / 关于组：恒显示
+      g.dataset.dadaTab = tab;
+      g.style.display = (tab === this.tab) ? '' : 'none';
+    }
+  }
+
+  tabNavRow(plainBlock) {
+    return {
+      type: 'setting',
+      name: '',
+      desc: '',
+      render: (s) => {
+        const el = plainBlock(s);
+        el.addClass('dt-set-tabs');
+        const TABS = [
+          ['todo', 'settings.tabTodo'],
+          ['agent', 'settings.tabAgent']
+        ];
+        // 首次渲染：宿主把 defs 装进 DOM 后才有 .setting-group，用 rAF 等一帧再打标
+        requestAnimationFrame(() => {
+          const root = el.closest('.vertical-tab-content') || el.closest('.setting') || el.parentElement?.parentElement;
+          if (root) this.applyTabVisibility(root);
+        });
+        for (const [id, key] of TABS) {
+          const b = el.createEl('button', {
+            cls: 'dt-set-tab' + (this.tab === id ? ' is-on' : ''),
+            text: t(key)
+          });
+          b.addEventListener('click', () => {
+            if (this.tab === id) return;
+            this.tab = id;
+            // 更新按钮高亮 + 切换组显隐（不依赖宿主重渲）
+            for (const sibling of el.querySelectorAll('.dt-set-tab')) {
+              sibling.classList.toggle('is-on', sibling === b);
+            }
+            const root = el.closest('.vertical-tab-content') || el.closest('.setting') || el.parentElement?.parentElement;
+            if (root) this.applyTabVisibility(root);
+          });
+        }
+      }
+    };
   }
 
   getSettingDefinitions() {
@@ -869,10 +933,24 @@ export class DadaTodoSettingTab extends PluginSettingTab {
           });
         });
       }),
+      row('summaryPromptTemplate', 'summaryPromptTemplateDesc', (s) => {
+        s.addTextArea((tx) => {
+          tx.inputEl.rows = 6;
+          tx.inputEl.style.width = '100%';
+          tx.setPlaceholder(T('summaryPromptTemplatePlaceholder'));
+          tx.setValue(String(plugin.settings.project.summaryPromptTemplate || ''));
+          tx.onChange(async (value) => {
+            plugin.settings.project.summaryPromptTemplate = String(value || '');
+            await plugin.saveSettings();
+          });
+        });
+      }),
     ]);
 
-    // 关于置顶：让用户第一眼看到插件信息与求助入口（issue 反馈 / 重建索引入口也在此）
-    const defs = [about, appearance, journal, inbox, views, projectGroup, reminder, taskMark, tagColorGroup];
+    // 双 Tab（对齐 Agent Deck）：tab 导航行在最前；组显隐由 applyTabVisibility 控制
+    //（声明式宿主缓存 defs，过滤 defs 无法触发重渲，故恒渲染全部组、DOM 上切换）
+    const nav = this.tabNavRow(plainBlock);
+    const defs = [nav, about, appearance, journal, inbox, views, projectGroup, reminder, taskMark, tagColorGroup];
     return defs;
     } catch (e) {
       // 定义阶段抛错（非常罕见）：直接显示错误

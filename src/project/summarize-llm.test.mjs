@@ -100,3 +100,22 @@ test('复现:工具注入(createdBy="tool")仍然过滤（bugfix 回归）', () 
   assert.doesNotMatch(t, /系统注入/);
   assert.match(t, /无 createdBy 的旧消息/);
 });
+
+// prompt 模板可配置：空模板走默认；含 {{transcript}} 整段接管；只含 {{delegation}} 替换 system
+test('buildSummaryPrompt 模板覆盖', () => {
+  const d = buildSummaryPrompt('任务A', '记录B');
+  assert.equal(d.system.length > 0, true);
+  assert.match(d.user, /任务A/);
+  assert.match(d.user, /记录B/);
+  // 含 {{transcript}}：user 为空，transcript 填进 system
+  const full = buildSummaryPrompt('任务A', '记录B', '总结以下：{{delegation}}\n记录：{{transcript}}');
+  assert.equal(full.user, '');
+  assert.match(full.system, /总结以下：任务A/);
+  assert.match(full.system, /记录：记录B/);
+  // 只含 {{delegation}}：system 替换，user 保持默认结构
+  const sysOnly = buildSummaryPrompt('任务A', '记录B', '你是评审员：{{delegation}}');
+  assert.equal(sysOnly.system, '你是评审员：任务A');
+  assert.match(sysOnly.user, /完整会话记录/);
+  // 空模板 = 默认
+  assert.equal(buildSummaryPrompt('A', 'B', '').system, d.system);
+});
