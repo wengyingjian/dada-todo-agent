@@ -414,6 +414,15 @@ export async function syncOnce(plugin) {
           if (fresh) updated += 1;
         }
       }
+      // 绑定在日记（项目根之外）的会话：其 cwd 同样是「未知工作区」，收集提醒。
+      // 只提醒（决定之后的归属），不搬动已落日记的任务行
+      if (s.unmatchedPrompt !== false && t.cwd) {
+        const inProject = locs.some((loc) => {
+          const dir = String(loc.filePath || '').replace(/\/[^/]*$/, '');
+          return dir === rootOf(plugin) || dir.startsWith(rootOf(plugin) + '/');
+        });
+        if (!inProject) unmatched.add(t.cwd);
+      }
       void newest;
       continue;
     }
