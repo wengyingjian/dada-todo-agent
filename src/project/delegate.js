@@ -217,23 +217,28 @@ export function mainProcessFetch() {
 }
 
 // 取会话消息 → 构建 prompt → 调 LLM → 解析。任何一步失败返回 null（调用方回退）。
+// LLM 调用失败（网络抖动等）时 3 秒后重试一次；仍失败交给反向同步的静默兜底重总结。
 export async function summarizeThread(plugin, { threadId, dbPath, settings, delegationPrompt = '' }) {
-  try {
+  const summarizeOnce = async () => {
     const msgs = await fetchThreadMessages(dbPath || t3DbPath(), threadId);
     if (!msgs.length) return null;
     const promptCount = countUserPrompts(msgs);
     const transcript = buildTranscript(msgs, { maxChars: 24000 });
     const { system, user } = buildSummaryPrompt(delegationPrompt, transcript);
-    const llm = await callSummaryLlm({
+    return callSummaryLlm({
       baseUrl: settings.summaryLlmBaseUrl,
       model: settings.summaryLlmModel,
       apiKey: settings.summaryLlmApiKey,
       system, user,
       timeoutMs: (Number(settings.summaryTimeoutSeconds) || 30) * 1000,
       fallbackFetchers: [mainProcessFetch()]
-    });
-    if (!llm) return null;
-    return { ...llm, promptCount };
+    }).then((llm) => (llm ? { ...llm, promptCount } : null));
+  };
+  try {
+    const first = await summarizeOnce();
+    if (first) return first;
+    await new Promise((r) => setTimeout(r, 3000));
+    return await summarizeOnce();
   } catch {
     return null;
   }
