@@ -16,6 +16,7 @@
           <span v-if="g.unbound" class="da-ms-badge warn">{{ g.unbound }} 条未入库</span>
           <span v-if="g.ignored" class="da-ms-badge muted">已忽略</span>
           <span v-else-if="g.projectDir" class="da-ms-badge ok">→ {{ projectName(g.projectDir) }}</span>
+          <span v-else-if="g.journalOnly" class="da-ms-badge muted">放入日记</span>
           <span v-else class="da-ms-badge warn">未归属</span>
         </span>
       </div>
@@ -29,6 +30,9 @@
       </div>
       <div class="da-unmatched-row da-unmatched-sub" v-else-if="g.projectDir && g.unbound">
         <button class="pa-btn primary" @click="importTo(g)">导入 {{ g.unbound }} 条到项目</button>
+      </div>
+      <div class="da-unmatched-row da-unmatched-sub" v-if="g.ignored || g.journalOnly">
+        <button class="pa-btn" @click="reset(g)">重置为未归属</button>
       </div>
       <div v-if="errors[g.cwd]" class="da-unmatched-err">{{ errors[g.cwd] }}</div>
     </div>
@@ -51,6 +55,7 @@ export default {
     onIgnore: { type: Function, default: null },   // ({ cwd })
     onJournal: { type: Function, default: null },  // ({ cwd })
     onImport: { type: Function, default: null },   // ({ cwd }) → { imported, moved }
+    onReset: { type: Function, default: null },    // ({ cwd })——重置为未归属
     onRefresh: { type: Function, default: null }   // 操作后重新取汇总
   },
   emits: ['update:open'],
@@ -115,6 +120,13 @@ export default {
         new Notice(`已导入 ${r.imported || 0} 条、搬回 ${r.moved || 0} 条`);
         await this.reload();
       } catch (e) { this.errors[g.cwd] = '导入失败：' + String((e && e.message) || e); }
+    },
+    async reset(g) {
+      try {
+        if (this.onReset) await this.onReset({ cwd: g.cwd });
+        new Notice('已重置为未归属，可重新选择创建项目 / 放入日记 / 忽略');
+        await this.reload();
+      } catch (e) { this.errors[g.cwd] = '操作失败：' + String((e && e.message) || e); }
     }
   }
 };

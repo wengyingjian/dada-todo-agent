@@ -4,7 +4,7 @@ import { TagColorModal } from './modals.js';
 import { countInboxTasks, migrateInboxTasks, loadAll, loadChecklists, collectTags } from '../api/tasks.js';
 import { setColorScheme, setWeekStart, tagColorOf, usedTagColors, EXTRA_SCHEME_OPTIONS, isImeKey } from '../composables/tasks-logic.js';
 import { VIEW_MENU_ITEMS, DEFAULT_MENU_VIEWS, reorderViews } from '../composables/viewMenu.js';
-import { fullSyncSummary, importAndMoveForNode, scanProjects, ignoreWorkspace, keepJournalWorkspace, createProjectWithCwd } from '../../project/runtime.js';
+import { fullSyncSummary, importAndMoveForNode, scanProjects, ignoreWorkspace, keepJournalWorkspace, createProjectWithCwd, resetWorkspace } from '../../project/runtime.js';
 import ManualSyncModal from '../../project/ManualSyncModal.vue';
 import { VueModal } from './VueModal.js';
 
@@ -794,6 +794,7 @@ export class DadaTodoSettingTab extends PluginSettingTab {
               onIgnore: async ({ cwd }) => { await ignoreWorkspace(plugin, cwd); },
               onJournal: async ({ cwd }) => { await keepJournalWorkspace(plugin, cwd); },
               onImport: async ({ cwd }) => importAndMoveForNode(plugin, nodeByCwd(cwd)),
+              onReset: async ({ cwd }) => { await resetWorkspace(plugin, cwd); },
               onRefresh: async () => {
                 const gs = await fullSyncSummary(plugin);
                 return { groups: gs, total: gs.reduce((n, g) => n + g.total, 0) };
@@ -815,56 +816,8 @@ export class DadaTodoSettingTab extends PluginSettingTab {
           });
         });
       }),
-      row('ignoredWorkspaces', 'ignoredWorkspacesDesc', (s) => {
-        s.addTextArea((tx) => {
-          tx.inputEl.rows = 3;
-          tx.inputEl.style.width = '100%';
-          tx.inputEl.addClass('dt-ignored-textarea');
-          // 忽略工作区以 ; 分隔编辑：解析时去空白、去重复、去尾斜杠
-          const list = Array.isArray(plugin.settings.projectIgnoredWorkspaces)
-            ? plugin.settings.projectIgnoredWorkspaces : [];
-          tx.setValue(list.join(';'));
-          let committed = list.join(';');
-          tx.onChange(async (value) => {
-            const next = Array.from(new Set(
-              String(value || '').split(';')
-                .map((x) => x.trim().replace(/\/+$/, ''))
-                .filter(Boolean)
-            ));
-            // 与上次提交值相同（如输入过程中的中间态解析出同一结果）不落盘
-            const joined = next.join(';');
-            if (joined === committed) return;
-            committed = joined;
-            plugin.settings.projectIgnoredWorkspaces = next;
-            await plugin.saveSettings();
-          });
-        });
-      }),
-      row('journalWorkspaces', 'journalWorkspacesDesc', (s) => {
-        s.addTextArea((tx) => {
-          tx.inputEl.rows = 3;
-          tx.inputEl.style.width = '100%';
-          tx.inputEl.addClass('dt-ignored-textarea');
-          // 「放入日记/关闭弹窗」后不再提醒的 cwd，同样 ; 分隔可编辑：
-          // 从这里删掉即可让该工作区下次重新弹提醒
-          const list = Array.isArray(plugin.settings.projectNotifiedWorkspaces)
-            ? plugin.settings.projectNotifiedWorkspaces : [];
-          tx.setValue(list.join(';'));
-          let committed = list.join(';');
-          tx.onChange(async (value) => {
-            const next = Array.from(new Set(
-              String(value || '').split(';')
-                .map((x) => x.trim().replace(/\/+$/, ''))
-                .filter(Boolean)
-            ));
-            const joined = next.join(';');
-            if (joined === committed) return;
-            committed = joined;
-            plugin.settings.projectNotifiedWorkspaces = next;
-            await plugin.saveSettings();
-          });
-        });
-      }),
+      // 已忽略 / 放入日记的工作区管理与重置统一在「手动同步」弹窗里做（每个 cwd 一张卡，
+      // 重置为未归属后可重新选择创建项目 / 放入日记 / 忽略），设置页不再放文本域
       row('summaryMaxChars', 'summaryMaxCharsDesc', (s) => {
         s.addText((tx) => {
           tx.setValue(String(plugin.settings.project.summaryMaxChars || 200));

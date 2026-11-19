@@ -654,9 +654,10 @@ export async function fullSyncSummary(plugin) {
   const idx = scanProjects(plugin);
   const map = await rebuildDelegationMap(plugin);
   const ignoredWs = (plugin.settings && plugin.settings.projectIgnoredWorkspaces) || [];
+  const notifiedWs = new Set((plugin.settings && plugin.settings.projectNotifiedWorkspaces) || []);
   const norm = (s) => String(s || '').trim().replace(/\/+$/, '');
   const groups = summarizeThreadsByCwd(threads, idx.nodes, ignoredWs);
-  // 标注每组未绑定数：map 键 = threadId
+  // 标注每组未绑定数与「放入日记」标记（在已提醒列表且未归属项目 = journalOnly，可重置）
   for (const g of groups) {
     const target = norm(g.cwd);
     let unbound = 0;
@@ -666,6 +667,7 @@ export async function fullSyncSummary(plugin) {
       if (c === target || c.startsWith(target + '/')) { if (!map.get(t.threadId)) unbound += 1; }
     }
     g.unbound = unbound;
+    g.journalOnly = !g.ignored && !g.projectDir && notifiedWs.has(target);
   }
   return groups;
 }
@@ -684,6 +686,14 @@ export async function unignoreWorkspace(plugin, cwd) {
   list.delete(target);
   plugin.settings.projectIgnoredWorkspaces = Array.from(list);
   await plugin.saveData(plugin.settings);
+}
+
+// 手动同步弹窗的「重置为未归属」：从忽略列表和已提醒列表都移除，
+// 该 cwd 回到三选一状态（创建项目 / 放入日记 / 忽略）
+export async function resetWorkspace(plugin, cwd) {
+  await unignoreWorkspace(plugin, cwd);
+  await removeNotifiedWorkspace(plugin, cwd);
+  return { ok: true };
 }
 
 // 按预设名创建项目并把 cwd 写进 frontmatter；名称冲突时自动加后缀 -2 / -3 …
