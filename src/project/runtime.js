@@ -10,7 +10,7 @@ import {
 import { isArchiveFile, pickArchiveFile } from './archive.js';
 import { extractDelegations, formatDelegationLine, parseDelegationLine, planDelegationInsert, T3_MARK } from './delegate-line.js';
 
-import { queryThreads, chooseOwner, threadTitleOf, classifyWorkspace, collectUnmatched } from './reverse-sync.js';
+import { queryThreads, chooseOwner, threadTitleOf, classifyWorkspace, collectUnmatched, summarizeThreadsByCwd } from './reverse-sync.js';
 import { summarize, summarizeThread } from './delegate.js';
 import { shouldResummarize } from './summarize-llm.js';
 import { replaceSummaryInLines, locateDelegationLine } from './summarize-apply.js';
@@ -643,6 +643,39 @@ export async function ignoreWorkspace(plugin, cwd) {
 export async function keepJournalWorkspace(plugin, cwd) {
   await markUnmatchedNotified(plugin, [cwd]);
   return { ok: true };
+}
+
+// ---------- 手动同步（设置页入口） ----------
+
+// 全量查 T3 库并按 cwd 汇总归属状态（unbound = 24h 窗口内且未绑定的活动会话数口径之外，
+// 这里 unbound 是全库未绑定数，供手动同步弹窗展示与导入）
+export async function fullSyncSummary(plugin) {
+  const threads = await queryThreads(t3DbPath(), 0).catch(() => []);
+  const idx = scanProjects(plugin);
+  const map = await rebuildDelegationMap(plugin);
+  const ignoredWs = (plugin.settings && plugin.settings.projectIgnoredWorkspaces) || [];
+  const norm = (s) => String(s || '').trim().replace(/\/+$/, '');
+  const groups = summarizeThreadsByCwd(threads, idx.nodes, ignoredWs);
+  // 标注每组未绑定数：map 键 = threadId
+  for (const g of groups) {
+    const target = norm(g.cwd);
+    let unbound = 0;
+    for (const t of threads) {
+      const c = norm(t.cwd);
+      if (g.cwd === '(无 cwd)') { if (!c) { if (!map.get(t.threadId)) unbound += 1; } continue; }
+      if (c === target || c.startsWith(target + '/')) { if (!map.get(t.threadId)) unbound += 1; }
+    }
+    g.unbound = unbound;
+  }
+  return groups;
+}
+
+// 按节点导入 + 搬回的合并入口（手动同步与弹窗创建共用）；node 缺 cwd 时报错
+export async function importAndMoveForNode(plugin, node) {
+  if (!node || !normalizeCwd(node.cwd || '')) return { ok: false, reason: 'no_cwd' };
+  const imp = await importThreadsToProject(plugin, node);
+  const mv = await moveDelegationsToProject(plugin, node);
+  return { ok: true, imported: imp.imported, moved: mv.moved };
 }
 
 export async function unignoreWorkspace(plugin, cwd) {

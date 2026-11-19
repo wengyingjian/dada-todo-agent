@@ -4,6 +4,9 @@ import { TagColorModal } from './modals.js';
 import { countInboxTasks, migrateInboxTasks, loadAll, loadChecklists, collectTags } from '../api/tasks.js';
 import { setColorScheme, setWeekStart, tagColorOf, usedTagColors, EXTRA_SCHEME_OPTIONS, isImeKey } from '../composables/tasks-logic.js';
 import { VIEW_MENU_ITEMS, DEFAULT_MENU_VIEWS, reorderViews } from '../composables/viewMenu.js';
+import { fullSyncSummary, importAndMoveForNode, scanProjects, ignoreWorkspace, keepJournalWorkspace, createProjectWithCwd } from '../../project/runtime.js';
+import ManualSyncModal from '../../project/ManualSyncModal.vue';
+import { VueModal } from './VueModal.js';
 
 // 自检新版：比对 GitHub 仓库 main 分支 manifest 的 version 与本地版本
 const UPDATE_REPO = 'Plover-PY/obsidian-DadaTodoList';
@@ -757,6 +760,50 @@ export class DadaTodoSettingTab extends PluginSettingTab {
             plugin.settings.project.reverseSyncMinMinutes = n;
             plugin.saveSettings();
           });
+        });
+      }),
+      row('manualSync', 'manualSyncDesc', (s) => {
+        const btn = s.controlEl.createEl('button', { cls: 'pa-btn', text: T('manualSyncButton') });
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          try {
+            const groups = await fullSyncSummary(plugin);
+            const total = groups.reduce((n, g) => n + g.total, 0);
+            const nodeByCwd = (cwd) => {
+              // 按 cwd 找归属项目节点（最长前缀命中）
+              const idx = scanProjects(plugin);
+              const norm = (x) => String(x || '').trim().replace(/\/+$/, '');
+              const target = norm(cwd);
+              let best = null;
+              for (const n of idx.nodes) {
+                const c = norm(n.cwd);
+                if (!c) continue;
+                if (target === c || target.startsWith(c + '/')) {
+                  if (!best || c.length > norm(best.cwd).length) best = n;
+                }
+              }
+              return best;
+            };
+            new VueModal(this.app, ManualSyncModal, {
+              open: true,
+              groups,
+              total,
+              onCreate: async ({ name, cwd, importHistory }) => (
+                createProjectWithCwd(plugin, name, cwd, { importHistory: importHistory !== false })
+              ),
+              onIgnore: async ({ cwd }) => { await ignoreWorkspace(plugin, cwd); },
+              onJournal: async ({ cwd }) => { await keepJournalWorkspace(plugin, cwd); },
+              onImport: async ({ cwd }) => importAndMoveForNode(plugin, nodeByCwd(cwd)),
+              onRefresh: async () => {
+                const gs = await fullSyncSummary(plugin);
+                return { groups: gs, total: gs.reduce((n, g) => n + g.total, 0) };
+              }
+            }, { width: '600px' }).open();
+          } catch (e) {
+            new Notice('打开手动同步失败：' + String((e && e.message) || e));
+          } finally {
+            btn.disabled = false;
+          }
         });
       }),
       row('unmatchedPrompt', 'unmatchedPromptDesc', (s) => {

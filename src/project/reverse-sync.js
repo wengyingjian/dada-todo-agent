@@ -109,6 +109,40 @@ export function collectUnmatched(cwds, notified) {
   return { items, newCwds };
 }
 
+// 全量会话按 cwd 汇总（手动同步弹窗的数据源；纯函数便于单测）。
+// threads: queryThreads 全量结果；nodes: 项目索引节点；ignored: 已忽略工作区
+// 返回按 cwd 前缀最长匹配归组的条目：[{ cwd, name, total, unbound, bound, ignored, projectDir }]
+// cwd 空的会话归入 '(无 cwd)' 组。
+export function summarizeThreadsByCwd(threads, nodes, ignored) {
+  const norm = (s) => String(s || '').trim().replace(/\/+$/, '');
+  const groups = new Map();
+  for (const t of threads || []) {
+    const cwd = norm(t.cwd) || '(无 cwd)';
+    let g = groups.get(cwd);
+    if (!g) { g = { cwd, name: cwd.split('/').pop() || cwd, total: 0, unbound: 0, bound: 0, ignored: false, projectDir: '' }; groups.set(cwd, g); }
+    g.total += 1;
+  }
+  // 每组标注归属：ignored（命中忽略列表）或 projectDir（最长前缀命中的项目）
+  for (const g of groups.values()) {
+    if (g.cwd === '(无 cwd)') continue;
+    const target = norm(g.cwd);
+    let owner = null;
+    for (const n of nodes || []) {
+      const c = norm(n.cwd);
+      if (!c) continue;
+      if (target === c || target.startsWith(c + '/')) {
+        if (!owner || c.length > norm(owner.cwd).length) owner = n;
+      }
+    }
+    if (owner) g.projectDir = owner.dirPath || '';
+    for (const ig of ignored || []) {
+      const n = norm(ig);
+      if (n && (target === n || target.startsWith(n + '/'))) { g.ignored = true; break; }
+    }
+  }
+  return Array.from(groups.values()).sort((a, b) => b.total - a.total);
+}
+
 // 只读查询：返回线程数组；任何失败都返回空数组（调用方记日志，不弹窗）
 export async function queryThreads(dbPath, sinceMs, { execFile } = {}) {
   const run = execFile || nodeExecFile;
