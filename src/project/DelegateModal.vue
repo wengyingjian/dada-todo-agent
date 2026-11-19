@@ -59,6 +59,12 @@ export default {
   width: 100%; border-radius: 6px; padding: 6px;
   border: 1px solid var(--background-modifier-border); background: var(--background-primary);
 }
+/* 内容输入框：宽度不变，高度为宽度的 3/4 */
+.da-delegate textarea {
+  aspect-ratio: 4 / 3;
+  min-height: 120px;
+  resize: vertical;
+}
 .da-delegate-cwd { display: flex; gap: 6px; align-items: center; }
 .da-delegate-cwd input { flex: 1; }
 </style>
