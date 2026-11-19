@@ -8,7 +8,7 @@
     <p class="da-unmatched-hint" v-if="!loaded">正在读取 T3 库…</p>
     <p class="da-unmatched-hint" v-else-if="!groups.length">T3 库里没有会话</p>
     <p class="da-unmatched-hint" v-else>共 {{ totalThreads }} 条会话，按工作目录分组：</p>
-    <div v-for="g in groups" :key="g.cwd" class="da-unmatched-item">
+    <div v-for="g in items" :key="g.cwd" class="da-unmatched-item">
       <div class="da-unmatched-cwd" :title="g.cwd">
         {{ g.cwd }}
         <span class="da-ms-badges">
