@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  formatDelegationLine, parseDelegationLine, stateFromRun, extractDelegations, shortId, renderSummaryBlock, countSummaryDescLines, planDelegationInsert
+  formatDelegationLine, parseDelegationLine, stateFromRun, extractDelegations, shortId, renderSummaryBlock, countSummaryDescLines, planDelegationInsert, findThreadLinks, threadIdFromToken
 } from './delegate-line.js';
 
 const ID = '3f2a9b1c-4d5e-6f70-8192-a3b4c5d6e7f8';
@@ -138,4 +138,39 @@ test('delegationInsertAt: 任务行后有多个空行时全部跳过并计数', 
 test('delegationInsertAt: 任务行后紧跟其他内容(无空行)时不动', () => {
   const lines = ['- [ ] 任务', '	- [x] 已有子行'];
   assert.deepEqual(planDelegationInsert(lines, 0), { at: 1, removeEmpty: 0 });
+});
+
+// ---------- 编辑器可点会话标记：⚡ t3:<id> ----------
+
+test('findThreadLinks: 定位标记范围与会话 id（含 #count 版本号）', () => {
+  const line = `\t- [x] 改完了  ⚡ t3:${ID}#2`;
+  const links = findThreadLinks(line);
+  assert.equal(links.length, 1);
+  assert.equal(links[0].threadId, ID);
+  assert.equal(line.slice(links[0].from, links[0].to), `⚡ t3:${ID}#2`);
+});
+
+test('findThreadLinks: 保留 mcp: 前缀的会话 id', () => {
+  const links = findThreadLinks(`\t- [x] 完成  ⚡ t3:mcp:${ID}`);
+  assert.equal(links.length, 1);
+  assert.equal(links[0].threadId, `mcp:${ID}`);
+});
+
+test('findThreadLinks: 无会话 id 的占位行 / 失败行不可点', () => {
+  assert.deepEqual(findThreadLinks(`\t- [/] 进行中…  ⚡ t3:`), []);
+  assert.deepEqual(findThreadLinks(`\t- [-] spawn t3 ENOENT  ⚡ t3:`), []);
+});
+
+test('findThreadLinks: 一行多个标记全部命中，普通文本不受影响', () => {
+  const other = '11111111-2222-3333-4444-555555555555';
+  const line = `⚡ t3:${ID} 和 ⚡ t3:${other}#3`;
+  const links = findThreadLinks(line);
+  assert.deepEqual(links.map((l) => l.threadId), [ID, other]);
+  assert.deepEqual(findThreadLinks('- [ ] 普通任务'), []);
+});
+
+test('threadIdFromToken: 截到 uuid 结尾，忽略前缀与版本号', () => {
+  assert.equal(threadIdFromToken(`mcp:${ID}#5`), `mcp:${ID}`);
+  assert.equal(threadIdFromToken(`p!a1b2c3d4`), '');
+  assert.equal(threadIdFromToken(''), '');
 });

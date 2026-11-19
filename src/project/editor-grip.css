@@ -11,3 +11,12 @@
   user-select: none;
 }
 .dada-grip:hover { opacity: 1; background: var(--background-modifier-hover); }
+
+/* 编辑器会话标记 `⚡ t3:<id>`：可点击，悬停出「打开 T3 Code 会话」hint */
+.dada-thread-link {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 0 2px;
+  color: var(--text-accent);
+}
+.dada-thread-link:hover { background: var(--background-modifier-hover); }

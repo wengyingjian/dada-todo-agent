@@ -12,6 +12,7 @@ import { mergeProjectSettings } from '../project/settings.js';
 import { syncOnce, collectUnmatched, markUnmatchedNotified, ignoreWorkspace, keepJournalWorkspace, createProjectWithCwd } from '../project/runtime.js';
 import UnmatchedWorkspaceModal from '../project/UnmatchedWorkspaceModal.vue';
 import { editorGripExtension } from '../project/editor-grip-ui.js';
+import { editorThreadLinkExtension } from '../project/editor-thread-link-ui.js';
 import '../project/editor-grip.css';
 import { initI18n, t } from './i18n/index.js';
 import { tooltip } from './directives/tooltip.js';
@@ -197,6 +198,9 @@ export default class DadaTodoPlugin extends Plugin {
 
     // [project-view] 编辑器纸飞机委派：光标落在列表项行时行尾挂把手，单击弹委派弹窗
     this.registerEditorExtension(editorGripExtension(this));
+
+    // [project-view] 编辑器会话标记：`⚡ t3:<id>` 变成可点链接（hint「打开 T3 Code 会话」）
+    this.registerEditorExtension(editorThreadLinkExtension());
   }
 
   /** 监听 Obsidian 明暗主题切换，自动重算依赖主题的配色（紫罗兰 dark/light 变体等） */

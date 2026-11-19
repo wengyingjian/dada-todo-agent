@@ -10,6 +10,31 @@ export function shortId(threadId) {
   return (uuid ? uuid[0] : id).replace(/-/g, '').slice(0, 6);
 }
 
+// 从 `t3:` 之后的那段 token 里取会话 id：允许 mcp: 前缀，截到 uuid 结尾（不含 #count 版本号）。
+// 没有 uuid（占位行 / 起进程就失败的子行）返回 ''。
+export function threadIdFromToken(rawToken) {
+  const token = String(rawToken == null ? '' : rawToken);
+  const uuid = UUID_RE.exec(token);
+  return uuid ? token.slice(0, token.indexOf(uuid[0]) + uuid[0].length) : '';
+}
+
+// 编辑器用：找出文本里所有「可点击」的会话标记 `⚡ t3:<id>`（含 #count 版本号整段）。
+// 返回相对文本的偏移 [{ from, to, threadId }]；没有会话 id 的标记不返回。
+const THREAD_LINK_RE = /⚡\s*t3:(\S*)/g;
+
+export function findThreadLinks(text) {
+  const s = String(text == null ? '' : text);
+  const out = [];
+  THREAD_LINK_RE.lastIndex = 0;
+  let m;
+  while ((m = THREAD_LINK_RE.exec(s))) {
+    const threadId = threadIdFromToken(m[1]);
+    if (!threadId) continue;
+    out.push({ from: m.index, to: m.index + m[0].length, threadId });
+  }
+  return out;
+}
+
 const STATE_TEXT = {
   running: '进行中…',
   awaiting: '等你回答…',
