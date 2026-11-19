@@ -130,7 +130,8 @@ export default class DadaTodoPlugin extends Plugin {
     // 弹窗内选「创建项目」（名称预填可改，自动写入 cwd）或「忽略工作区」（此后该 cwd 整条跳过）。
     this.onUnmatchedWorkspaces = (cwds) => {
       try {
-        const { items, newCwds } = collectUnmatched(this, cwds);
+        // 签名：(cwds, notified)——collectUnmatched 是纯函数，不收 plugin
+        const { items, newCwds } = collectUnmatched(cwds, this.settings.projectNotifiedWorkspaces);
         if (!items.length) return;
         new VueModal(this.app, UnmatchedWorkspaceModal, {
           open: true,
