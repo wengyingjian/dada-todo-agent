@@ -437,5 +437,29 @@
     "openSession": "Open session",
     "noDeepLink": "T3 Code environment-id not found",
     "openFailed": "Could not open the T3 Code session"
+  },
+  "conversation": {
+    "title": "Conversation",
+    "open": "Open conversation",
+    "openInT3": "Open in T3 Code",
+    "refresh": "Refresh",
+    "you": "You",
+    "assistant": "T3 Code",
+    "empty": "No messages to show yet",
+    "running": "Replying…",
+    "waiting": "Waiting for your answer",
+    "send": "Send",
+    "sendHint": "⌘↵ to send · ↵ for a new line",
+    "placeholder": "Message this session…",
+    "sendFailed": "Could not send: {{error}}",
+    "sendFailedShort": "This message did not go through",
+    "loadFailed": "Could not load: {{error}}",
+    "t3Down": "Cannot reach T3 Code. Open T3 Code and try again.",
+    "submit": "Submit answer",
+    "submitHint": "Submit to let T3 continue",
+    "customPlaceholder": "Type a custom answer…",
+    "question": "Question",
+    "answerFailed": "Could not submit: {{error}}",
+    "foot": "Messages go straight to T3 Code; while it is busy they queue for the next turn."
   }
 }

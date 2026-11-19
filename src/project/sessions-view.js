@@ -9,6 +9,7 @@ import { queryThreads, threadTitleOf } from './reverse-sync.js';
 import { groupSessions, isT3DbFile, stateChipOf, timeAgoParts, workspaceLabel } from './session-groups.js';
 import { lattice } from './lattice.js';
 import { T3_ICON } from './assets/t3code-icon.js';
+import { ConversationModal } from './conversation-modal.js';
 import { t } from '../core/i18n/index.js';
 
 export const SESSIONS_VIEW_TYPE = 'dada-todo-agent-sessions-view';
@@ -131,10 +132,14 @@ export class SessionsView extends ItemView {
   }
 
   // 与 AgentDeck view.js::sessionCard 的 DOM 层级逐行对齐；只删掉本插件没有的数据
-  // （token / 子代理 / side chat / 进度文本）和「查看对话」入口。
+  // （token / 子代理 / side chat / 进度文本）。对话按钮与 AgentDeck 一致：
+  // 整卡和箭头跳 T3 Code，messages-square 打开对话弹窗。
   sessionCard(parent, thread) {
     const state = thread.state;
-    const card = parent.createDiv({ cls: 'ad-sess' });
+    const card = parent.createDiv({
+      cls: 'ad-sess has-conversation',
+      attr: { 'data-thread-id': thread.threadId }
+    });
     card.style.setProperty('--ad-agent', AGENT_COLOR);
     card.style.setProperty('--ad-agent-soft', AGENT_SOFT);
     if (state === 'running') card.classList.add('is-live');
@@ -181,19 +186,37 @@ export class SessionsView extends ItemView {
       timeLine.createSpan({ text: agoText(ago) });
     }
 
+    const conversation = card.createEl('button', {
+      cls: 'ad-arrow',
+      attr: { 'aria-label': t('conversation.open'), 'data-action': 'conversation' }
+    });
+    setLucide(conversation.createSpan({ cls: 'ad-arrow__icon' }), 'messages-square');
+    conversation.onclick = (e) => { e.stopPropagation(); this.openConversation(thread); };
+
     const go = card.createEl('button', { cls: 'ad-arrow', attr: { 'aria-label': t('sessions.openSession') } });
     setLucide(go.createSpan({ cls: 'ad-arrow__icon' }), 'arrow-up-right');
     go.onclick = (e) => { e.stopPropagation(); this.openThread(thread); };
-    card.onclick = () => this.openThread(thread);
+    card.onclick = (e) => {
+      if (e.target.closest?.('[data-action="conversation"]')) return;
+      this.openThread(thread);
+    };
     card.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       const menu = new Menu();
+      menu.addItem((item) => item
+        .setTitle(t('conversation.open'))
+        .setIcon('messages-square')
+        .onClick(() => this.openConversation(thread)));
       menu.addItem((item) => item
         .setTitle(t('sessions.openSession'))
         .setIcon('arrow-up-right')
         .onClick(() => this.openThread(thread)));
       menu.showAtMouseEvent(e);
     });
+  }
+
+  openConversation(thread) {
+    new ConversationModal(this.app, this.plugin, thread).open();
   }
 
   openThread(thread) {

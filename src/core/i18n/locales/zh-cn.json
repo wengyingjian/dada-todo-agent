@@ -437,5 +437,29 @@
     "openSession": "打开会话",
     "noDeepLink": "找不到 T3 Code environment-id",
     "openFailed": "无法打开 T3 Code 会话"
+  },
+  "conversation": {
+    "title": "对话",
+    "open": "打开对话",
+    "openInT3": "在 T3 Code 打开",
+    "refresh": "刷新",
+    "you": "你",
+    "assistant": "T3 Code",
+    "empty": "还没有可显示的消息",
+    "running": "正在回复…",
+    "waiting": "等待你的回答",
+    "send": "发送",
+    "sendHint": "⌘↵ 发送 · ↵ 换行",
+    "placeholder": "给这个会话发条消息…",
+    "sendFailed": "发送失败：{{error}}",
+    "sendFailedShort": "这条消息没有发出去",
+    "loadFailed": "读取失败：{{error}}",
+    "t3Down": "连不上 T3 Code，请先打开 T3 Code 再试",
+    "submit": "提交回答",
+    "submitHint": "回答后提交，T3 会继续执行",
+    "customPlaceholder": "输入自定义回答…",
+    "question": "提问",
+    "answerFailed": "提交回答失败：{{error}}",
+    "foot": "消息直接发给 T3 Code，忙碌时会排队到下一轮。"
   }
 }

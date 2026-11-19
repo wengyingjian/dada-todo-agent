@@ -1,0 +1,384 @@
+/* 对话弹窗样式：外壳与消息卡片原样取自 obsidian-agent-deck styles.css（Apache-2.0），
+   只把根选择器 .ad-conversation 换成 .dada-conversation、去掉工具时间线，
+   并补上输入区与提问卡片的样式（沿用同一套 --ad-* token）。 */
+
+.modal.dada-conversation-modal {
+  width: min(680px, 94vw);
+}
+
+.dada-conversation {
+  --ad-radius: 14px;
+  --ad-radius-sm: 10px;
+  --ad-line: var(--background-modifier-border);
+  --ad-surface: var(--background-secondary);
+  --ad-surface-2: var(--background-secondary-alt);
+  --ad-ink: var(--text-normal);
+  --ad-muted: var(--text-muted);
+  --ad-faint: var(--text-faint);
+  --ad-accent: #6f8ab8;
+  --ad-good: #6f8f7c;
+  --ad-warn: #a9845f;
+  --ad-bad: #a86f6d;
+  --ad-figure: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
+  --ad-ctrl-radius: 8px;
+  --ad-ctrl-font: 12px;
+  --ad-btn-radius: 9px;
+  --ad-btn-font: 12px;
+  width: auto;
+  max-height: none;
+  overflow: visible;
+  padding-top: 2px;
+  text-align: left;
+}
+
+.dada-conversation :is(input, textarea) {
+  text-align: left;
+}
+
+/* 按钮 */
+.dada-conversation .ad-btn {
+  appearance: none;
+  border: 1px solid var(--ad-line);
+  background: var(--background-primary);
+  box-shadow: none;
+  border-radius: var(--ad-btn-radius, 9px);
+  cursor: pointer;
+  color: var(--ad-ink);
+  height: auto;
+  padding: 7px 12px;
+  font-size: var(--ad-btn-font, 12px);
+  line-height: normal;
+  font-weight: 600;
+  transition: transform .15s ease, background .15s ease, border-color .15s ease;
+}
+.dada-conversation .ad-btn:hover {
+  transform: translateY(-1px);
+  background: var(--background-modifier-hover);
+}
+.dada-conversation .ad-btn[disabled] {
+  opacity: .55;
+  cursor: default;
+  transform: none;
+}
+.dada-conversation .ad-btn.ad-btn--ghost {
+  background: transparent;
+}
+.dada-conversation .ad-btn.ad-btn--soft {
+  background: var(--background-modifier-hover);
+  border-color: transparent;
+}
+.dada-conversation .ad-btn.ad-btn--cta {
+  background: var(--ad-accent);
+  color: var(--text-on-accent);
+  border-color: transparent;
+}
+.dada-conversation .ad-btn.ad-btn--cta:hover {
+  filter: brightness(1.05);
+}
+.dada-conversation .ad-btnrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+/* 头部 */
+.dada-conversation .ad-conv-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dada-conversation .ad-conv-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px 2px 6px;
+  border-radius: 999px;
+  background: rgba(111, 138, 184, .13);
+  border: 1px solid rgba(111, 138, 184, .28);
+  color: var(--ad-ink);
+  font-size: 11px;
+  font-weight: 600;
+}
+.dada-conversation .ad-conv-agent__mark {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+}
+.dada-conversation .ad-conv-agent__mark img {
+  width: 100%;
+  height: 100%;
+  border-radius: 24%;
+}
+.dada-conversation .ad-conv-sub {
+  font-family: var(--ad-figure);
+  font-size: 11px;
+  color: var(--ad-muted);
+}
+.dada-conversation .ad-conv-title {
+  margin-top: 8px;
+  font-size: 17px;
+  font-weight: 750;
+  letter-spacing: -.02em;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.dada-conversation .ad-conv-actions {
+  margin-top: 12px;
+  align-items: center;
+}
+.dada-conversation .ad-conv-actions .ad-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.dada-conversation .ad-conv-refresh {
+  margin-left: auto;
+}
+
+/* 消息区 */
+.dada-conversation .ad-conversation__messages {
+  max-height: 52vh;
+  overflow-y: auto;
+  margin: 12px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--ad-line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  user-select: text;
+}
+.dada-conversation .ad-conv-empty {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px 16px;
+  border-radius: var(--ad-radius-sm);
+  border: 1px dashed var(--ad-line);
+  background: var(--ad-surface);
+  color: var(--ad-muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.dada-conversation .ad-conversation__message {
+  padding: 11px 14px;
+  border-radius: var(--ad-radius-sm);
+  border: 1px solid var(--ad-line);
+  overflow-wrap: anywhere;
+}
+.dada-conversation .ad-conversation__message.is-user {
+  background: var(--ad-surface);
+}
+.dada-conversation .ad-conversation__message.is-assistant {
+  background: var(--background-primary);
+  border-left: 3px solid var(--ad-accent);
+}
+.dada-conversation .ad-conversation__message.is-local {
+  opacity: .72;
+}
+.dada-conversation .ad-conversation__message.is-failed {
+  border-left: 3px solid var(--ad-bad);
+}
+.dada-conversation .ad-conversation__message pre {
+  white-space: pre-wrap;
+}
+.dada-conversation .ad-conv-msg__role {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--ad-muted);
+}
+.dada-conversation .ad-conv-msg__role .ad-icon {
+  display: inline-flex;
+  width: 13px;
+  height: 13px;
+}
+.dada-conversation .ad-conv-msg__role svg {
+  width: 13px;
+  height: 13px;
+}
+.dada-conversation .ad-conv-msg__body {
+  font-size: 13px;
+  line-height: 1.65;
+}
+.dada-conversation .ad-conv-msg__body > :first-child {
+  margin-top: 0;
+}
+.dada-conversation .ad-conv-msg__body > :last-child {
+  margin-bottom: 0;
+}
+.dada-conversation .ad-conv-status {
+  padding: 9px 12px;
+  border-radius: var(--ad-radius-sm);
+  border: 1px solid var(--ad-line);
+  background: var(--ad-surface);
+  font-size: 12px;
+  color: var(--ad-muted);
+}
+.dada-conversation .ad-conv-status.is-error {
+  border-left: 3px solid var(--ad-bad);
+  color: var(--ad-bad);
+}
+.dada-conversation .ad-conv-status.is-warn {
+  border-left: 3px solid var(--ad-warn);
+  color: var(--ad-warn);
+}
+.dada-conversation .ad-conv-status.is-live {
+  border-left: 3px solid var(--ad-accent);
+}
+
+/* 提问卡片 */
+.dada-conversation .dada-questions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+.dada-conversation .dada-question {
+  padding: 12px 14px;
+  border-radius: var(--ad-radius-sm);
+  border: 1px solid var(--ad-line);
+  border-left: 3px solid var(--ad-warn);
+  background: var(--ad-surface);
+}
+.dada-conversation .dada-question__header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ad-warn);
+}
+.dada-conversation .dada-question__required {
+  color: var(--ad-bad);
+}
+.dada-conversation .dada-question__text {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.dada-conversation .dada-question__options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.dada-conversation .dada-option {
+  appearance: none;
+  text-align: left;
+  border: 1px solid var(--ad-line);
+  border-radius: var(--ad-radius-sm);
+  background: var(--background-primary);
+  box-shadow: none;
+  padding: 8px 11px;
+  cursor: pointer;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ad-ink);
+  transition: border-color .12s ease, background .12s ease;
+}
+.dada-conversation .dada-option:hover {
+  background: var(--background-modifier-hover);
+}
+.dada-conversation .dada-option.is-selected {
+  border-color: var(--ad-accent);
+  background: rgba(111, 138, 184, .13);
+}
+.dada-conversation .dada-option__label {
+  font-weight: 650;
+}
+.dada-conversation .dada-option__desc {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--ad-muted);
+}
+.dada-conversation .dada-question__custom {
+  width: 100%;
+  margin-top: 8px;
+  border: 1px solid var(--ad-line);
+  border-radius: var(--ad-ctrl-radius, 8px);
+  background: var(--background-primary);
+  color: var(--ad-ink);
+  padding: 6px 9px;
+  font-size: var(--ad-ctrl-font, 12px);
+  box-shadow: none;
+}
+.dada-conversation .dada-question__custom:focus {
+  border-color: var(--ad-accent);
+  box-shadow: 0 0 0 2px rgba(111, 138, 184, .18);
+}
+.dada-conversation .dada-question__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.dada-conversation .dada-question__hint {
+  font-size: 11px;
+  color: var(--ad-muted);
+}
+.dada-conversation .dada-question__submit {
+  margin-left: auto;
+}
+
+/* 输入区 */
+.dada-conversation .dada-composer {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ad-line);
+}
+.dada-conversation .dada-composer__input {
+  width: 100%;
+  min-height: 64px;
+  max-height: 180px;
+  resize: vertical;
+  border: 1px solid var(--ad-line);
+  border-radius: var(--ad-ctrl-radius, 8px);
+  background: var(--background-primary);
+  color: var(--ad-ink);
+  padding: 8px 10px;
+  font-size: var(--ad-ctrl-font, 12px);
+  line-height: 1.45;
+  box-shadow: none;
+}
+.dada-conversation .dada-composer__input:focus {
+  border-color: var(--ad-accent);
+  box-shadow: 0 0 0 2px rgba(111, 138, 184, .18);
+}
+.dada-conversation .dada-composer__input[disabled] {
+  opacity: .6;
+}
+.dada-conversation .dada-composer__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.dada-conversation .dada-composer__hint {
+  font-size: 11px;
+  color: var(--ad-muted);
+}
+.dada-conversation .dada-composer__send {
+  margin-left: auto;
+}
+.dada-conversation .ad-conv-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ad-line);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ad-muted);
+}
+.dada-conversation .ad-conv-foot__ico {
+  display: inline-flex;
+  flex: none;
+  width: 13px;
+  height: 13px;
+}

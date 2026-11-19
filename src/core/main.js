@@ -15,6 +15,7 @@ import { editorThreadLinkExtension } from '../project/editor-thread-link-ui.js';
 import { SessionsView, SESSIONS_VIEW_TYPE, SESSIONS_RIBBON_ICON } from '../project/sessions-view.js';
 import '../project/editor-grip.css';
 import '../project/sessions.css';
+import '../project/conversation.css';
 import { initI18n, t } from './i18n/index.js';
 import { tooltip } from './directives/tooltip.js';
 import { VueModal } from './ui/VueModal.js';
