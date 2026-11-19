@@ -55,19 +55,7 @@
       @refresh="loadThreads"
     />
 
-    <div v-if="modal" class="pa-modal-mask" @click.self="modal = null">
-      <div class="pa-modal">
-        <h4>委派给 T3 Code</h4>
-        <label>内容</label>
-        <textarea v-model="modal.prompt" rows="4"></textarea>
-        <label>工作目录</label>
-        <input v-model="modal.cwd" />
-        <div class="pa-modal-actions">
-          <button class="pa-btn" @click="modal = null">取消</button>
-          <button class="pa-btn primary" @click="confirmDelegate">发送</button>
-        </div>
-      </div>
-    </div>
+    <!-- 委派弹窗改走 VueModal（DelegateModal，与编辑器纸飞机共用），不再内联 -->
 
     <!-- 输入框弹窗：Electron 不支持 window.prompt，只能用自绘的。
          fields 为空是单输入框；有 fields 时逐行收集多个字段（如建项目时的名称+cwd） -->
@@ -118,6 +106,9 @@ import ProjectTaskList from './task-list.vue';
 import SessionPane from './session-pane.vue';
 import * as rt from './runtime.js';
 import { startDelegation } from './delegate.js';
+import { VueModal } from '../core/ui/VueModal.js';
+import DelegateModal from './DelegateModal.vue';
+import { pickFolder } from './electron-dialog.js';
 
 export default {
   name: 'ProjectView',
@@ -135,7 +126,6 @@ export default {
       width: 1000,
       showSessions: true,
       showTree: false,
-      modal: null,
       askState: null,
       askRefs: {},
       refreshing: false
@@ -215,18 +205,13 @@ export default {
       if (s.has(path)) s.delete(path); else s.add(path);
       this.openSet = s;
     },
-    // 系统文件夹选择对话框（Electron）；选完填回对应字段
+    // 系统文件夹选择对话框（Electron，共享 pickFolder）；选完填回对应字段
     async browseFolder(i) {
       const f = this.askState && this.askState.fields && this.askState.fields[i];
       if (!f) return;
       try {
-        const electron = require('electron');
-        const dialog = (electron && electron.remote && electron.remote.dialog)
-          || (electron && electron.dialog)
-          || (() => { try { return require('@electron/remote').dialog; } catch { return null; } })();
-        if (!dialog || !dialog.showOpenDialog) throw new Error('找不到系统对话框');
-        const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
-        if (!r.canceled && r.filePaths && r.filePaths[0]) this.askState.values[f.key] = r.filePaths[0];
+        const picked = await pickFolder();
+        if (picked) this.askState.values[f.key] = picked;
       } catch (e) {
         new Notice('打不开文件夹选择：' + String(e.message || e));
       }
@@ -310,22 +295,23 @@ export default {
     openDelegate(task) {
       const node = this.activeNode;
       if (!node) return;
-      this.modal = { task, prompt: task.summary, cwd: node.cwd || '' };
-    },
-    async confirmDelegate() {
-      const m = this.modal;
-      const node = this.activeNode;
-      this.modal = null;
-      if (!m || !node) return;
-      if (!m.cwd) { new Notice('请先为项目设置 cwd'); return; }
-      new Notice('已发送到 T3 Code，运行中…');
-      try {
-        await startDelegation(this.plugin, rt, { node, task: m.task, prompt: m.prompt, cwd: m.cwd });
-      } catch (e) {
-        new Notice('委派失败：' + String(e.message || e));
-      }
-      await this.refreshActive();
-      await this.loadThreads();
+      // 委派弹窗：DelegateModal 经 VueModal 挂载，与编辑器纸飞机共用同一组件
+      new VueModal(this.plugin.app, DelegateModal, {
+        open: true,
+        prompt: task.summary,
+        cwd: node.cwd || '',
+        onConfirm: async ({ prompt, cwd }) => {
+          if (!cwd) { new Notice('请先为项目设置 cwd'); return; }
+          new Notice('已发送到 T3 Code，运行中…');
+          try {
+            await startDelegation(this.plugin, rt, { node, task, prompt, cwd });
+          } catch (e) {
+            new Notice('委派失败：' + String(e.message || e));
+          }
+          await this.refreshActive();
+          await this.loadThreads();
+        }
+      }).open();
     },
     openThread(threadId) {
       const url = rt.t3DeepLink(threadId);
