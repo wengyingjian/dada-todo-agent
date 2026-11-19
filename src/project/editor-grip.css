@@ -1,0 +1,13 @@
+/* 编辑器纸飞机把手：光标所在列表项行尾，样式对齐任务中心 .pa-fly */
+.dada-grip {
+  display: inline-block;
+  margin-left: 6px;
+  cursor: pointer;
+  color: var(--text-accent);
+  font-size: 12px;
+  opacity: 0.6;
+  border-radius: 4px;
+  padding: 0 3px;
+  user-select: none;
+}
+.dada-grip:hover { opacity: 1; background: var(--background-modifier-hover); }

@@ -10,6 +10,8 @@ import { DadaTodoSettingTab } from './ui/settings.js';
 import { ReminderService } from './services/reminder.js';
 import { mergeProjectSettings } from '../project/settings.js';
 import { syncOnce } from '../project/runtime.js';
+import { editorGripExtension } from '../project/editor-grip-ui.js';
+import '../project/editor-grip.css';
 import { initI18n, t } from './i18n/index.js';
 import { tooltip } from './directives/tooltip.js';
 import { VueModal } from './ui/VueModal.js';
@@ -163,6 +165,9 @@ export default class DadaTodoPlugin extends Plugin {
 
     // 明暗主题切换后，自动重算依赖主题的配色（如深色 / 浅色变体、块内文字等），无需手动切换视图
     this.registerThemeColorRefresh();
+
+    // [project-view] 编辑器纸飞机委派：光标落在列表项行时行尾挂把手，单击弹委派弹窗
+    this.registerEditorExtension(editorGripExtension(this));
   }
 
   /** 监听 Obsidian 明暗主题切换，自动重算依赖主题的配色（紫罗兰 dark/light 变体等） */
