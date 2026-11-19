@@ -4,7 +4,6 @@ import { TagColorModal } from './modals.js';
 import { countInboxTasks, migrateInboxTasks, loadAll, loadChecklists, collectTags } from '../api/tasks.js';
 import { setColorScheme, setWeekStart, tagColorOf, usedTagColors, EXTRA_SCHEME_OPTIONS, isImeKey } from '../composables/tasks-logic.js';
 import { VIEW_MENU_ITEMS, DEFAULT_MENU_VIEWS, reorderViews } from '../composables/viewMenu.js';
-import { unignoreWorkspace } from '../../project/runtime.js';
 
 // 自检新版：比对 GitHub 仓库 main 分支 manifest 的 version 与本地版本
 const UPDATE_REPO = 'Plover-PY/obsidian-DadaTodoList';
@@ -770,23 +769,29 @@ export class DadaTodoSettingTab extends PluginSettingTab {
         });
       }),
       row('ignoredWorkspaces', 'ignoredWorkspacesDesc', (s) => {
-        const list = Array.isArray(plugin.settings.projectIgnoredWorkspaces)
-          ? plugin.settings.projectIgnoredWorkspaces : [];
-        const wrap = s.controlEl.createDiv('dt-ignored-workspaces');
-        if (!list.length) {
-          wrap.createDiv({ cls: 'dt-ignored-empty', text: T('ignoredWorkspacesEmpty') });
-        } else {
-          for (const cwd of list) {
-            const rowEl = wrap.createDiv('dt-ignored-row');
-            rowEl.createSpan({ cls: 'dt-ignored-cwd', text: cwd, attr: { title: cwd } });
-            const btn = rowEl.createEl('button', { cls: 'pa-btn', text: T('ignoredWorkspacesRemove') });
-            btn.addEventListener('click', async () => {
-              await unignoreWorkspace(plugin, cwd);
-              // 移除后整页重渲，列表即时更新
-              this.display();
-            });
-          }
-        }
+        s.addTextArea((tx) => {
+          tx.inputEl.rows = 3;
+          tx.inputEl.style.width = '100%';
+          tx.inputEl.addClass('dt-ignored-textarea');
+          // 忽略工作区以 ; 分隔编辑：解析时去空白、去重复、去尾斜杠
+          const list = Array.isArray(plugin.settings.projectIgnoredWorkspaces)
+            ? plugin.settings.projectIgnoredWorkspaces : [];
+          tx.setValue(list.join(';'));
+          let committed = list.join(';');
+          tx.onChange(async (value) => {
+            const next = Array.from(new Set(
+              String(value || '').split(';')
+                .map((x) => x.trim().replace(/\/+$/, ''))
+                .filter(Boolean)
+            ));
+            // 与上次提交值相同（如输入过程中的中间态解析出同一结果）不落盘
+            const joined = next.join(';');
+            if (joined === committed) return;
+            committed = joined;
+            plugin.settings.projectIgnoredWorkspaces = next;
+            await plugin.saveSettings();
+          });
+        });
       }),
       row('summaryMaxChars', 'summaryMaxCharsDesc', (s) => {
         s.addText((tx) => {
