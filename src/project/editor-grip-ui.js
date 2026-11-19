@@ -78,7 +78,9 @@ export function openEditorDelegate(plugin, lineNo, lineText) {
       try {
         await startDelegation(plugin, rt, {
           node: { filePath },
+          // CM6 的 lineNo 是含 frontmatter 的全文档行号，落盘时按正文行号换算
           task: { lineNo },
+          lineNoBasis: 'document',
           prompt: p,
           cwd: c
         });

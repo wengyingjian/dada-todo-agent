@@ -1,13 +1,12 @@
 import { PluginSettingTab, Notice, AbstractInputSuggest, TFolder, setIcon } from 'obsidian';
+import { createApp } from 'vue';
 import { t } from '../i18n/index.js';
 import { TagColorModal } from './modals.js';
 import { countInboxTasks, migrateInboxTasks, loadAll, loadChecklists, collectTags } from '../api/tasks.js';
 import { setColorScheme, setWeekStart, tagColorOf, usedTagColors, EXTRA_SCHEME_OPTIONS, isImeKey } from '../composables/tasks-logic.js';
 import { VIEW_MENU_ITEMS, DEFAULT_MENU_VIEWS, reorderViews } from '../composables/viewMenu.js';
-import { fullSyncSummary, importAndMoveForNode, scanProjects, ignoreWorkspace, keepJournalWorkspace, createProjectWithCwd, resetWorkspace } from '../../project/runtime.js';
-import ManualSyncModal from '../../project/ManualSyncModal.vue';
+import WorkspaceManager from '../../project/WorkspaceManager.vue';
 import { DEFAULT_SUMMARY_SYSTEM } from '../../project/summarize-llm.js';
-import { VueModal } from './VueModal.js';
 
 // 自检新版：比对 GitHub 仓库 main 分支 manifest 的 version 与本地版本
 const UPDATE_REPO = 'Plover-PY/obsidian-DadaTodoList';
@@ -97,8 +96,18 @@ export class DadaTodoSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
-    // 设置页三 Tab（对齐 Agent Deck 视觉）：'todo' 待办清单 / 'agent' Agent 委派 / 'about' 关于
+    // 设置页四 Tab：'todo' 待办清单 / 'projects' 工作区管理 / 'agent' 项目与委派 / 'about' 关于
     this.tab = 'todo';
+    // 工作区管理器（Vue 组件）实例：设置页重渲时先卸载旧的，避免重复挂载
+    this.wsApp = null;
+  }
+
+  hide() {
+    if (this.wsApp) {
+      try { this.wsApp.unmount(); } catch (_) { /* 已卸载 */ }
+      this.wsApp = null;
+    }
+    super.hide();
   }
 
   // Tab 导航行：plainBlock 渲染一排 tab 按钮。
@@ -107,6 +116,7 @@ export class DadaTodoSettingTab extends PluginSettingTab {
   // 点击时显示/隐藏对应组。按 i18n key 反查标题，换语言不失效。
   static TAB_GROUP_KEYS = {
     todo: ['groupAppearance', 'groupJournal', 'groupInbox', 'groupViews', 'groupReminder', 'groupTaskMark', 'groupTagColors'],
+    projects: ['groupWorkspaces'],
     agent: ['groupProject'],
     about: ['groupAbout']
   };
@@ -147,6 +157,7 @@ export class DadaTodoSettingTab extends PluginSettingTab {
         el.addClass('dt-set-tabs');
         const TABS = [
           ['todo', 'settings.tabTodo'],
+          ['projects', 'settings.tabProjects'],
           ['agent', 'settings.tabAgent'],
           ['about', 'settings.tabAbout']
         ];
@@ -385,6 +396,20 @@ export class DadaTodoSettingTab extends PluginSettingTab {
           this._inboxCommitted = plugin.settings.inboxFile || 'DadaTodoList.md';
           tx.onChange((value) => this.handleInboxPathChange(value));
           new MarkdownFileSuggest(app, tx.inputEl, (path) => this.handleInboxPathChange(path));
+        });
+      }),
+      row('checklistFolder', 'checklistFolderDesc', (s) => {
+        s.addText((tx) => {
+          tx.setPlaceholder('/');
+          tx.setValue(plugin.settings.checklistFolder || '/');
+          const apply = (value) => {
+            // 空 / '/' 都表示库根（与「日记文件夹」同一约定）；只影响「新建清单」的落点
+            const v = String(value || '').trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^\/+|\/+$/g, '');
+            plugin.settings.checklistFolder = v || '/';
+            plugin.saveSettings();
+          };
+          tx.onChange(apply);
+          new FolderSuggest(app, tx.inputEl, (path) => apply(path));
         });
       }),
       row('checklistTag', 'checklistTagDesc', (s) => {
@@ -751,6 +776,25 @@ export class DadaTodoSettingTab extends PluginSettingTab {
       },
     ]);
 
+    // ---------- [project-view] 工作区管理（项目 / 日记 / 忽略） ----------
+    // 三态显式归属：未记录的工作区默认忽略、不回传。管理器是 Vue 组件，挂到整行容器里。
+    const workspaceGroup = group('groupWorkspaces', [{
+      type: 'setting',
+      name: '',
+      desc: '',
+      render: safe((s) => {
+        const host = plainBlock(s);
+        host.addClass('dt-ws-host');
+        if (this.wsApp) {
+          try { this.wsApp.unmount(); } catch (_) { /* 已卸载 */ }
+          this.wsApp = null;
+        }
+        const app = createApp(WorkspaceManager, { plugin });
+        app.mount(host);
+        this.wsApp = app;
+      })
+    }]);
+
     // ---------- [project-view] 项目与委派 ----------
     // 项目视图以「项目根目录」为数据库：每个子文件夹是一个项目，文件夹里的 task-*.md 存任务；
     // 任务行右侧的小飞机把任务交给 T3 Code，会话结果再反向同步回任务行。
@@ -839,62 +883,6 @@ export class DadaTodoSettingTab extends PluginSettingTab {
           });
         });
       }),
-      row('manualSync', 'manualSyncDesc', (s) => {
-        const btn = s.controlEl.createEl('button', { cls: 'pa-btn', text: T('manualSyncButton') });
-        btn.addEventListener('click', async () => {
-          btn.disabled = true;
-          try {
-            const groups = await fullSyncSummary(plugin);
-            const total = groups.reduce((n, g) => n + g.total, 0);
-            const nodeByCwd = (cwd) => {
-              // 按 cwd 找归属项目节点（最长前缀命中）
-              const idx = scanProjects(plugin);
-              const norm = (x) => String(x || '').trim().replace(/\/+$/, '');
-              const target = norm(cwd);
-              let best = null;
-              for (const n of idx.nodes) {
-                const c = norm(n.cwd);
-                if (!c) continue;
-                if (target === c || target.startsWith(c + '/')) {
-                  if (!best || c.length > norm(best.cwd).length) best = n;
-                }
-              }
-              return best;
-            };
-            new VueModal(this.app, ManualSyncModal, {
-              open: true,
-              groups,
-              total,
-              onCreate: async ({ name, cwd, importHistory, llm }) => (
-                createProjectWithCwd(plugin, name, cwd, { importHistory: importHistory !== false, llm: !!llm })
-              ),
-              onIgnore: async ({ cwd }) => { await ignoreWorkspace(plugin, cwd); },
-              onJournal: async ({ cwd }) => { await keepJournalWorkspace(plugin, cwd); },
-              onImport: async ({ cwd, llm }) => importAndMoveForNode(plugin, nodeByCwd(cwd), { llm: !!llm }),
-              onReset: async ({ cwd }) => { await resetWorkspace(plugin, cwd); },
-              onRefresh: async () => {
-                const gs = await fullSyncSummary(plugin);
-                return { groups: gs, total: gs.reduce((n, g) => n + g.total, 0) };
-              }
-            }, { width: '600px' }).open();
-          } catch (e) {
-            new Notice('打开手动同步失败：' + String((e && e.message) || e));
-          } finally {
-            btn.disabled = false;
-          }
-        });
-      }),
-      row('unmatchedPrompt', 'unmatchedPromptDesc', (s) => {
-        s.addToggle((tg) => {
-          tg.setValue(plugin.settings.project.unmatchedPrompt !== false);
-          tg.onChange(async (value) => {
-            plugin.settings.project.unmatchedPrompt = value;
-            await plugin.saveSettings();
-          });
-        });
-      }),
-      // 已忽略 / 放入日记的工作区管理与重置统一在「手动同步」弹窗里做（每个 cwd 一张卡，
-      // 重置为未归属后可重新选择创建项目 / 放入日记 / 忽略），设置页不再放文本域
       row('summaryMaxChars', 'summaryMaxCharsDesc', (s) => {
         s.addText((tx) => {
           tx.setValue(String(plugin.settings.project.summaryMaxChars || 200));
@@ -967,7 +955,7 @@ export class DadaTodoSettingTab extends PluginSettingTab {
     // 双 Tab（对齐 Agent Deck）：tab 导航行在最前；组显隐由 applyTabVisibility 控制
     //（声明式宿主缓存 defs，过滤 defs 无法触发重渲，故恒渲染全部组、DOM 上切换）
     const nav = this.tabNavRow(plainBlock);
-    const defs = [nav, about, appearance, journal, inbox, views, projectGroup, reminder, taskMark, tagColorGroup];
+    const defs = [nav, about, workspaceGroup, projectGroup, appearance, journal, inbox, views, reminder, taskMark, tagColorGroup];
     return defs;
     } catch (e) {
       // 定义阶段抛错（非常罕见）：直接显示错误

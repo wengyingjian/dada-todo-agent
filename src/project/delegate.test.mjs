@@ -123,17 +123,17 @@ test('解析子行时剥掉分点描述行,返回其行数以便调用方替换�
 
 // ---------- bugfix 回归: 任务行与子行之间不得夹空行 ----------
 
-test('delegationInsertAt: 任务行后紧跟尾部空串时,子行应紧贴任务行且删掉途中的空行', () => {
+test('delegationInsertAt: 任务行后紧跟尾部空串时,子行紧贴任务行且不删空行', () => {
   // 真实场景: createChecklistTask 建父任务后, body 以 \n 结尾 → 尾部空串
   const lines = ['前文', '- [ ] 任务X', '- [ ] 做个游戏', ''];
   const r = planDelegationInsert(lines, 2);
-  // 期望: 插在 3(紧贴任务行),并删除 3 位置的空串
-  assert.deepEqual(r, { at: 3, removeEmpty: 1 });
+  // 空行被顶到子行之后，不再删除（删除会吃掉用户自己的分段空行）
+  assert.deepEqual(r, { at: 3, removeEmpty: 0 });
 });
-test('delegationInsertAt: 任务行后有多个空行时全部跳过并计数', () => {
+test('delegationInsertAt: 任务行后有多个空行时也不删（空行留在子行之后）', () => {
   const lines = ['- [ ] 任务', '', '', '后续'];
   const r = planDelegationInsert(lines, 0);
-  assert.deepEqual(r, { at: 1, removeEmpty: 2 });
+  assert.deepEqual(r, { at: 1, removeEmpty: 0 });
 });
 test('delegationInsertAt: 任务行后紧跟其他内容(无空行)时不动', () => {
   const lines = ['- [ ] 任务', '	- [x] 已有子行'];
@@ -173,4 +173,34 @@ test('threadIdFromToken: 截到 uuid 结尾，忽略前缀与版本号', () => {
   assert.equal(threadIdFromToken(`mcp:${ID}#5`), `mcp:${ID}`);
   assert.equal(threadIdFromToken(`p!a1b2c3d4`), '');
   assert.equal(threadIdFromToken(''), '');
+});
+
+// ---------- 占位 id：threadId 回填前唯一定位这一行 ----------
+
+test('占位行带 p! 临时 id：可解析，且不算真实会话 id', () => {
+  const line = formatDelegationLine({ state: 'running', summary: 'hello', threadId: '', pendingId: 'a1b2c3d4' });
+  assert.equal(line, '\t- [/] hello  ⚡ t3:p!a1b2c3d4');
+  const p = parseDelegationLine(line);
+  assert.equal(p.threadId, '');
+  assert.equal(p.pendingId, 'a1b2c3d4');
+});
+
+test('占位 id 与 #count 可共存', () => {
+  const p = parseDelegationLine('\t- [/] hello  ⚡ t3:p!a1b2c3d4#2');
+  assert.equal(p.pendingId, 'a1b2c3d4');
+  assert.equal(p.summarizedPromptCount, 2);
+});
+
+test('extractDelegations: 顶层任务自带标记 = self，父行是它自己', () => {
+  const out = extractDelegations([`- [x] 19:48 hello  ⚡ t3:${ID}#1`, '  1. 要点']);
+  assert.equal(out[0].self, true);
+  assert.equal(out[0].parentLine, 0);
+});
+
+test('extractDelegations: 委派可挂在普通列表项下，父行不必是 checkbox 任务', () => {
+  const lines = ['- hello', '\t- [/] hello  ⚡ t3:p!abcd1234'];
+  const out = extractDelegations(lines);
+  assert.equal(out[0].self, false);
+  assert.equal(out[0].parentLine, 0);
+  assert.equal(out[0].pendingId, 'abcd1234');
 });

@@ -1,32 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildScanSql, mapThreadRow, chooseOwner, threadTitleOf, taskDateMeta, classifyWorkspace, collectUnmatched, summarizeThreadsByCwd } from './reverse-sync.js';
+import { buildScanSql, mapThreadRow, chooseOwner, threadTitleOf, taskDateMeta, classifyWorkspace, unboundTarget } from './reverse-sync.js';
 import { buildProjectIndex } from './index.js';
-
-// summarizeThreadsByCwd：全量分组 + 最长前缀归属 + 忽略标注
-test('全量会话按 cwd 汇总：无 cwd 归一组，归属取最长前缀', () => {
-  const threads = [
-    { threadId: 'a', cwd: '/repos/a', title: 'x' },
-    { threadId: 'b', cwd: '/repos/a/sub', title: 'y' },
-    { threadId: 'c', cwd: '/repos', title: 'z' },
-    { threadId: 'd', cwd: '', title: 'w' },
-    { threadId: 'e', cwd: '/tmp/scratch', title: 'v' }
-  ];
-  const nodes = [
-    { dirPath: '任务/A', cwd: '/repos/a' },
-    { dirPath: '任务/根', cwd: '/repos' }
-  ];
-  const groups = summarizeThreadsByCwd(threads, nodes, ['/tmp/scratch']);
-  const byCwd = Object.fromEntries(groups.map((g) => [g.cwd, g]));
-  // 分组按原始 cwd 精确归组（子目录单独成组），归属才做最长前缀
-  assert.equal(byCwd['/repos/a'].total, 1);
-  assert.equal(byCwd['/repos/a/sub'].total, 1);
-  assert.equal(byCwd['/repos/a'].projectDir, '任务/A');
-  assert.equal(byCwd['/repos/a/sub'].projectDir, '任务/A'); // 子目录归属父项目
-  assert.equal(byCwd['/repos'].projectDir, '任务/根');
-  assert.equal(byCwd['(无 cwd)'].total, 1);
-  assert.equal(byCwd['/tmp/scratch'].ignored, true);
-});
 
 test('扫描 SQL 覆盖所需表并排除内部线程', () => {
   const sql = buildScanSql('2026-11-18T00:00:00.000Z');
@@ -79,29 +54,55 @@ test('mapThreadRow: 任一 run running 时状态覆盖为 running（agent-deck �
   assert.equal(r2.state, 'completed');
 });
 
-// classifyWorkspace：project / ignored / unknown 三态，忽略口径与项目匹配一致（前缀 + /）
-test('归属分类：ignored 命中（含子目录）优先于 unknown，但让位于项目命中', () => {
+// classifyWorkspace：只有 project / journal / ignored 三态，未记录默认 ignored
+test('归属分类：三态与默认忽略', () => {
   const idx = buildProjectIndex([{ path: '任务/工作' }], [{ path: '任务/工作/task-工作.md', frontmatter: { cwd: '/repos' } }], { root: '任务' });
-  assert.equal(classifyWorkspace('/tmp/x', idx.nodes, []).type, 'unknown');
-  assert.equal(classifyWorkspace('/tmp/x', idx.nodes, ['/tmp']).type, 'ignored');
-  assert.equal(classifyWorkspace('/tmp/x/sub', idx.nodes, ['/tmp']).type, 'ignored');
-  // 命中项目时不因忽略列表误伤（项目 cwd 前缀 > 忽略前缀时仍归项目）
-  assert.equal(classifyWorkspace('/repos/a', idx.nodes, ['/repos']).type, 'project');
-  assert.equal(classifyWorkspace('', idx.nodes, []).type, 'unknown');
-  // 尾斜杠与空白归一化
-  assert.equal(classifyWorkspace('/tmp/x', idx.nodes, ['/tmp/ ']).type, 'ignored');
+  // 没在任何列表 = 默认忽略（implicit 标记便于 UI 区分显式设置）
+  const def = classifyWorkspace('/tmp/x', idx.nodes, [], []);
+  assert.equal(def.type, 'ignored');
+  assert.equal(def.implicit, true);
+  // 显式忽略 / 日记（含子目录、尾斜杠/空白归一化）
+  assert.equal(classifyWorkspace('/tmp/x', idx.nodes, ['/tmp'], []).type, 'ignored');
+  assert.equal(classifyWorkspace('/tmp/x/sub', idx.nodes, ['/tmp'], []).type, 'ignored');
+  assert.equal(classifyWorkspace('/tmp/x', idx.nodes, [], ['/tmp']).type, 'journal');
+  assert.equal(classifyWorkspace('/tmp/x', idx.nodes, [], ['/tmp/ ']).type, 'journal');
+  // 同一前缀显式状态压过项目（切换状态时靠这条生效）
+  assert.equal(classifyWorkspace('/repos/a', idx.nodes, ['/repos/a'], []).type, 'ignored');
+  // 项目前缀更具体时项目胜出
+  const deep = buildProjectIndex([{ path: '任务/深' }], [{ path: '任务/深/task-深.md', frontmatter: { cwd: '/repos/a' } }], { root: '任务' });
+  assert.equal(classifyWorkspace('/repos/a/src', deep.nodes, ['/repos'], []).type, 'project');
+  // 空 cwd 永远默认忽略
+  assert.equal(classifyWorkspace('', idx.nodes, [], ['/tmp']).type, 'ignored');
 });
 
-// collectUnmatched：去重、空 cwd 过滤、名称取 basename、count 透传（兼容纯字符串项）
-test('未知工作区去重：首次见到的才进弹窗', () => {
-  const r1 = collectUnmatched(['/repos/a', '/repos/a/', ' ', '/repos/b', { cwd: '/repos/c', count: 3 }], []);
-  assert.deepEqual(r1.items.map((x) => x.cwd), ['/repos/a', '/repos/b', '/repos/c']);
-  assert.deepEqual(r1.newCwds, ['/repos/a', '/repos/b', '/repos/c']);
-  assert.equal(r1.items[0].name, 'a');
-  assert.equal(r1.items[2].count, 3);
-  // 已提醒过的不再出现
-  const r2 = collectUnmatched(['/repos/a', '/repos/c'], ['/repos/a']);
-  assert.deepEqual(r2.items.map((x) => x.cwd), ['/repos/c']);
+test('归属分类：最长前缀胜出，三种状态可互相覆盖', () => {
+  const idx = buildProjectIndex([{ path: '任务/工作' }], [{ path: '任务/工作/task-工作.md', frontmatter: { cwd: '/repos' } }], { root: '任务' });
+  // 父目录是项目，子目录显式设为日记 → 子目录按日记（更具体）
+  assert.equal(classifyWorkspace('/repos/sub', idx.nodes, [], ['/repos/sub']).type, 'journal');
+  // 子目录显式忽略同理
+  assert.equal(classifyWorkspace('/repos/sub', idx.nodes, ['/repos/sub'], []).type, 'ignored');
+  // 父目录日记、子目录是更具体的项目 → 子目录归项目
+  const deep = buildProjectIndex([{ path: '任务/深' }], [{ path: '任务/深/task-深.md', frontmatter: { cwd: '/repos/a' } }], { root: '任务' });
+  assert.equal(classifyWorkspace('/repos/a', deep.nodes, [], ['/repos']).type, 'project');
+  // 同一前缀撞车：显式忽略 > 显式日记 > 自有项目 > 继承型项目。
+  // 显式状态压过项目，切换状态时无需清空项目 cwd（切回项目直接清列表即可，不重复建目录）
+  assert.equal(classifyWorkspace('/tmp/x', idx.nodes, ['/tmp'], ['/tmp']).type, 'ignored');
+  const own = [{ dirPath: '任务/根', cwd: '/repos', ownCwd: '/repos' }];
+  assert.equal(classifyWorkspace('/repos', own, [], []).type, 'project');
+  assert.equal(classifyWorkspace('/repos', own, [], ['/repos']).type, 'journal');
+  assert.equal(classifyWorkspace('/repos', own, ['/repos'], []).type, 'ignored');
+  // 继承 cwd 的项目（ownCwd 为空）同理，显式列表覆盖后立即生效
+  const inherited = [{ dirPath: '任务/根', cwd: '/repos', ownCwd: '' }];
+  assert.equal(classifyWorkspace('/repos', inherited, [], []).type, 'project');
+  assert.equal(classifyWorkspace('/repos', inherited, [], ['/repos']).type, 'journal');
+  assert.equal(classifyWorkspace('/repos', inherited, ['/repos'], []).type, 'ignored');
+});
+
+test('未绑定会话去向：只有项目 / 日记进入，忽略一律跳过', () => {
+  assert.equal(unboundTarget({ type: 'project' }), 'project');
+  assert.equal(unboundTarget({ type: 'journal' }), 'journal');
+  assert.equal(unboundTarget({ type: 'ignored' }), 'skip');
+  assert.equal(unboundTarget(null), 'skip');
 });
 
 // taskDateMeta：跨天 → 🛫+📅；同天 → HH:MM-HH:MM 前缀 + 📅；无时间 → 空片段

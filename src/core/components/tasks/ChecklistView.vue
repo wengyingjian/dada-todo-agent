@@ -2,12 +2,19 @@
   <div class="tk-clview">
     <!-- 左侧：清单列表（固定 260px） -->
     <aside class="tk-cl-side">
-      <div class="tk-cl-side-h"><i class="la la-tasks"></i><span>{{ $t('app.viewCl') }}</span></div>
+      <div class="tk-cl-side-h">
+        <i class="la la-tasks"></i><span>{{ $t('app.viewCl') }}</span>
+        <!-- 新建清单：与顶栏「新建任务」同一个加号按钮样式（tk-btn ico + la-plus） -->
+        <button class="tk-btn ico tk-cl-new" type="button" :title="$t('app.newChecklist')" @click="openNewChecklist">
+          <i class="la la-plus"></i>
+        </button>
+      </div>
       <div v-if="!lists.length" class="tk-cl-side-empty">{{ $t('app.clSideEmpty') }}</div>
       <div v-else class="tk-cl-list">
         <div v-for="c in lists" :key="c.key" class="tk-cl-item" :data-href="taskFilePath(c.key) || ''">
           <div class="tk-cl-item-main" :class="{ on: c.key === activeKey }"
                role="button" tabindex="0"
+               @contextmenu.prevent="onListContextMenu(c, $event)"
                @click="selectList(c.key)"
                @keydown.enter.prevent="selectList(c.key)"
                @keydown.space.prevent="selectList(c.key)">
@@ -120,10 +127,12 @@
 </template>
 
 <script>
+import { Menu, Notice } from 'obsidian';
 import { Tasks } from '../../composables/useTasks.js';
 import { taskFilePath } from '../../api/tasks.js';
 import { statusIcon, dateText, timeText, richSummaryNoTags, renderInlineHtml, scheduledText } from '../../composables/tasks-logic.js';
 import { VueModal } from '../../ui/VueModal.js';
+import ChecklistEditorModal from '../ChecklistEditorModal.vue';
 import TaskEditorModal from '../TaskEditorModal.vue';
 import { openTaskInFile } from '../../utils/openTaskInFile.js';
 import { handleInlineLinkClick } from '../../utils/openWikilink.js';
@@ -153,7 +162,14 @@ export default {
       error: '',
       dragGuid: '',        // 正在拖拽的任务 guid
       dragOverTitle: '',   // 当前拖拽悬停的分组标题（用于高亮）
+      pendingKey: '',      // 刚新建 / 归档的清单：metadataCache 刷新前先乐观处理，避免界面闪回
+      archivedKeys: [],    // 刚归档的清单 key：父级重载仍可能带回（metadataCache 延迟），本地持续过滤
+      createdItems: {},    // 刚新建的清单：父级列表暂未收录时先本地保留（同样等 metadataCache）
     };
+  },
+  beforeUnmount() {
+    for (const t of this._reloadTimers || []) clearTimeout(t);
+    this._reloadTimers = [];
   },
   computed: {
     // 隐藏已完成/已取消：仅显示真正的待办（未完成且未取消），并去掉因此变空的组
@@ -189,7 +205,18 @@ export default {
       immediate: true,
       async handler(cls) {
         const prevKey = this.activeKey;
-        this.lists = (cls && cls.length) ? cls.slice() : [];
+        const incoming = (cls && cls.length) ? cls.slice() : [];
+        // 刚归档的清单在 metadataCache 更新前仍可能被父级列表带回：持续本地过滤。
+        // 父级列表已不再包含它（缓存已刷新）时解除过滤，之后以父级数据为准。
+        this.archivedKeys = this.archivedKeys.filter((k) => incoming.some((x) => x.key === k));
+        let next = incoming.filter((x) => !this.archivedKeys.includes(x.key));
+        // 刚新建的清单：父级重载时 metadataCache 可能还没收录，先本地补上，避免选中被重置
+        for (const k of Object.keys(this.createdItems)) {
+          if (incoming.some((x) => x.key === k)) delete this.createdItems[k];
+        }
+        const missing = Object.values(this.createdItems).filter((it) => !next.some((x) => x.key === it.key));
+        if (missing.length) next = next.concat(missing).sort((a, b) => this.byName(a, b));
+        this.lists = next;
         if (prevKey && this.lists.some((x) => x.key === prevKey)) {
           // 当前选中项仍在：保留选中、同步名称，并重读当前清单的分组——
           // 右侧 groups / 统计是 loadGroups 读文件得到的本地数据，不随 lists 引用自动更新；
@@ -214,6 +241,72 @@ export default {
     pct(c) { return c.total ? Math.round((c.done / c.total) * 100) : 0; },
     gKey(g) { return g.title || '___ungrouped'; },
     firstLine(s) { return String(s || '').split(/\r?\n/)[0]; },
+    // 与 loadChecklists() 同一排序（中文按拼音）：新建的清单落位与下次全量刷新后一致
+    byName(a, b) { return String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN'); },
+    // 新建清单：弹窗与「新建任务」共用同一套外壳与原语（VueModal + tk-mask/tk-modal/tk-field/btn）
+    openNewChecklist() {
+      new VueModal(this.plugin.app, ChecklistEditorModal, {
+        open: true,
+        onSaved: (item) => this.onChecklistCreated(item)
+      }).open();
+    },
+    // 新建清单落地后的视图侧收尾：乐观插入并选中 → 请父级重载列表 → 两次延后对齐元数据缓存
+    async onChecklistCreated(item) {
+      if (!item || !item.key) return;
+      this.pendingKey = item.key;
+      this.createdItems = { ...this.createdItems, [item.key]: item };
+      const merged = this.lists.slice();
+      if (!merged.some((x) => x.key === item.key)) merged.push(item);
+      merged.sort((a, b) => this.byName(a, b));
+      this.lists = merged;
+      await this.selectList(item.key); // 文件已落盘，读到的是空分组 → 右侧显示「清单为空」
+      this.$emit('reload');
+      // frontmatter 解析稍晚才进 metadataCache：分两次延后重载（600ms / 1600ms）。
+      // 1600ms 那次兜住「首次 changed 事件落在 api 自写静默窗口内被跳过」的情况。
+      this.scheduleReload();
+    },
+    // 清单右键菜单：归档（写入 frontmatter tags: archived）与打开文件
+    onListContextMenu(c, ev) {
+      const menu = new Menu();
+      menu.addItem((i) => i.setTitle(this.$t('app.clArchive')).setIcon('archive')
+        .onClick(() => this.archiveList(c)));
+      menu.addItem((i) => i.setTitle(this.$t('app.openChecklistFile')).setIcon('file-text')
+        .onClick(() => this.openFile(c.key)));
+      menu.showAtMouseEvent(ev);
+    },
+    // 归档整份清单：乐观移除 + 若归档的是当前清单则切到第一份可见清单；
+    // 写入 tags 后 metadataCache 有延迟，所以父级列表分两次延后重载兜住缓存刷新。
+    async archiveList(c) {
+      try {
+        await Tasks.setChecklistArchived(c.key, true);
+        this.pendingKey = c.key;
+        this.archivedKeys = [...this.archivedKeys, c.key];
+        this.lists = this.lists.filter((x) => x.key !== c.key);
+        if (this.activeKey === c.key) {
+          if (this.lists.length) await this.selectList(this.lists[0].key);
+          else {
+            this.activeKey = '';
+            this.activeName = '';
+            this.groups = [];
+            this.activeTotal = 0;
+            this.activeDone = 0;
+          }
+        }
+        new Notice(this.$t('app.clArchived', { name: c.name }));
+        // 立即重载让父级尽快对齐；若 metadataCache 还没刷新，上面的 archivedKeys 会继续挡住。
+        // 两次延后（600ms / 1600ms）再兜一次，确保缓存最终生效。
+        this.$emit('reload');
+        this.scheduleReload();
+      } catch (e) {
+        this.error = this.$t('app.clArchiveFail') + ((e && e.message) || e);
+      }
+    },
+    // 新建 / 归档后的两次延后重载：等 Obsidian 把新的 frontmatter 写进 metadataCache
+    scheduleReload() {
+      this._reloadTimers = (this._reloadTimers || []).concat([600, 1600].map((ms) => setTimeout(() => {
+        if (this.pendingKey) this.$emit('reload');
+      }, ms)));
+    },
     async selectList(key) {
       this.activeKey = key;
       const c = this.lists.find((x) => x.key === key);
@@ -333,11 +426,15 @@ export default {
   background: var(--panel);
 }
 .tk-cl-side-h {
-  flex: none; display: flex; align-items: center; gap: 8px;
+  flex: none; display: flex; align-items: center; gap: 8px; min-width: 0;
   padding: 14px 16px; font-size: 14px; font-weight: 700; color: var(--ink);
   border-bottom: 1px solid var(--line);
 }
+/* 窄面板 / 英文界面下标题可省略，保证右侧「新建清单」按钮不被挤出可见区 */
+.tk-cl-side-h > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tk-cl-side-h i { color: var(--gold); font-size: 16px; }
+/* 新建清单按钮：推到标题行最右，与顶栏「新建任务」的加号同为 tk-btn ico */
+.tk-cl-new { margin-left: auto; flex: none; }
 .tk-cl-side-empty {
   padding: 28px 18px; color: var(--ink-soft); font-size: 12.5px; line-height: 1.7; text-align: center;
 }

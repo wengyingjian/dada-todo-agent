@@ -74,7 +74,8 @@ tags:
 - Switch between **list / columns** layouts; **drag a task onto another group** to move it
 - Each group has a **+ button** to add tasks; the sidebar shows live total / done progress per checklist
 - The eye toggle ("hide done") also folds checklists that have **no pending tasks** into a hint line at the bottom of the sidebar ("N hidden · Show all"); empty checklists are never folded so they can take their first task
-- The **+ button** at the right of the "Checklist" list header creates a new checklist from just a name — it is saved to the `清单` folder at the vault root by default (configurable via the "Checklist folder" setting); a new empty checklist can take its first task via the + next to "Checklist is empty"
+- The **+ button** at the right of the "Checklist" list header opens the same editor shell as "New task": enter a name and an optional **cwd** (with a system folder picker) — the file is saved to the `清单` folder at the vault root by default (configurable via the "Checklist folder" setting)
+- **Right-click a checklist → Archive checklist** adds the `archived` tag to its frontmatter `tags`; archived checklists disappear from the checklist and list views (remove the tag to restore)
 - The task editor shows the task's **current checklist / group** as a chip beside the title; clicking it drops down a small picker (checklist + group) right inside the editor — hit **Move** to relocate the task immediately with its dates kept, no extra dialog and no extra form height; new tasks can pick where to be saved the same way
 
 ### Data access disclosure

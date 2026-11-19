@@ -9,11 +9,12 @@ import { setupHoverPreview, teardownHoverPreview } from './hoverPreview.js';
 import { DadaTodoSettingTab } from './ui/settings.js';
 import { ReminderService } from './services/reminder.js';
 import { mergeProjectSettings } from '../project/settings.js';
-import { syncOnce, collectUnmatched, markUnmatchedNotified, ignoreWorkspace, keepJournalWorkspace, createProjectWithCwd } from '../project/runtime.js';
-import UnmatchedWorkspaceModal from '../project/UnmatchedWorkspaceModal.vue';
+import { syncOnce } from '../project/runtime.js';
 import { editorGripExtension } from '../project/editor-grip-ui.js';
 import { editorThreadLinkExtension } from '../project/editor-thread-link-ui.js';
+import { SessionsView, SESSIONS_VIEW_TYPE, SESSIONS_RIBBON_ICON } from '../project/sessions-view.js';
 import '../project/editor-grip.css';
+import '../project/sessions.css';
 import { initI18n, t } from './i18n/index.js';
 import { tooltip } from './directives/tooltip.js';
 import { VueModal } from './ui/VueModal.js';
@@ -112,6 +113,8 @@ export default class DadaTodoPlugin extends Plugin {
     }
 
     this.registerView(this.viewType, (leaf) => new DadaTodoView(leaf, this));
+    // [sessions] 右侧栏会话视图：待处理 / 进行中 / 已完成
+    this.registerView(SESSIONS_VIEW_TYPE, (leaf) => new SessionsView(leaf, this));
 
     // [project-view] T3 Code 反向同步：启动 8 秒后跑一次（等 Obsidian 索引就绪），之后按设置里的间隔（默认 60 秒）轮询。
     // 定时器固定 15 秒一跳，到点才真正查询，这样用户在设置里改间隔无需重启插件。
@@ -126,40 +129,20 @@ export default class DadaTodoPlugin extends Plugin {
       if (Date.now() - lastSyncAt >= every) syncTick();
     }, 15 * 1000));
 
-    // [project-view] 未知工作区提醒：syncOnce 扫到 cwd 匹配不到项目的会话时回调到这里。
-    // 去重（已提醒过的记 projectNotifiedWorkspaces）→ 过滤后仍有新 cwd 才弹窗；
-    // 弹窗三选一：创建项目（可勾选同时导入历史会话+搬回日记里的委派块）/ 忽略工作区 / 放入日记。
-    this.onUnmatchedWorkspaces = (cwds) => {
-      try {
-        // 签名：(cwds, notified)——collectUnmatched 是纯函数，不收 plugin
-        const { items, newCwds } = collectUnmatched(cwds, this.settings.projectNotifiedWorkspaces);
-        if (!items.length) return;
-        new VueModal(this.app, UnmatchedWorkspaceModal, {
-          open: true,
-          items,
-          onCreate: async ({ name, cwd, importHistory }) => {
-            const r = await createProjectWithCwd(this, name, cwd, { importHistory });
-            return r;
-          },
-          onIgnore: async ({ cwd }) => {
-            await ignoreWorkspace(this, cwd);
-          },
-          onJournal: async ({ cwd }) => {
-            await keepJournalWorkspace(this, cwd);
-          },
-          onNotified: () => { markUnmatchedNotified(this, newCwds); }
-        }, { width: '560px' }).open();
-      } catch (e) {
-        console.warn('[DadaAgent] 未知工作区提醒失败：', e);
-      }
-    };
-
     this.addRibbonIcon(ribbonIcon, t('app.openDada'), () => this.activateView());
+
+    this.addRibbonIcon(SESSIONS_RIBBON_ICON, t('sessions.open'), () => this.activateSessionsView());
 
     this.addCommand({
       id: commandId,
       name: t('app.openDada'),
       callback: () => this.activateView()
+    });
+
+    this.addCommand({
+      id: 'open-sessions',
+      name: t('sessions.open'),
+      callback: () => this.activateSessionsView()
     });
 
     // 新建任务：直接弹出新建任务弹窗（复用 VueModal 桥，无需先打开视图）
@@ -241,6 +224,20 @@ export default class DadaTodoPlugin extends Plugin {
     await this.openInLocation(this.settings.openLocation || 'main');
   }
 
+  /** 会话侧边栏：已打开则聚焦，否则固定开在右侧栏 */
+  async activateSessionsView() {
+    const { workspace } = this.app;
+    const existing = workspace.getLeavesOfType(SESSIONS_VIEW_TYPE);
+    if (existing.length) {
+      workspace.revealLeaf(existing[0]);
+      return;
+    }
+    const leaf = workspace.getRightLeaf(false);
+    if (!leaf) return;
+    await leaf.setViewState({ type: SESSIONS_VIEW_TYPE, active: true });
+    workspace.revealLeaf(leaf);
+  }
+
   /** 切换打开位置：关闭现有面板并按新位置重新打开 */
   async applyOpenLocation() {
     this.app.workspace.detachLeavesOfType(this.viewType);
@@ -250,6 +247,7 @@ export default class DadaTodoPlugin extends Plugin {
   onunload() {
     if (this.reminder) { this.reminder.stop(); this.reminder = null; }
     this.app.workspace.detachLeavesOfType(this.viewType);
+    this.app.workspace.detachLeavesOfType(SESSIONS_VIEW_TYPE);
     // 反注册核心「页面预览」来源，清理设置项里的本插件条目
     teardownHoverPreview(this);
   }
@@ -273,6 +271,13 @@ export default class DadaTodoPlugin extends Plugin {
       addDoneDateMarker: data.addDoneDateMarker ?? true,
       // 无日期任务的存放文件（相对库根目录）
       inboxFile: data.inboxFile || 'DadaTodoList.md',
+      // 新建清单文件的存放文件夹（相对库根目录）：默认「清单」；空串 / '/' 表示库根（与「日记文件夹」同一约定）。
+      // 只决定「新建」落点；已存在的清单仍按 frontmatter 标签全库识别，与目录无关。
+      checklistFolder: (() => {
+        const v = data.checklistFolder;
+        if (typeof v !== 'string') return '清单';
+        return v.trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^\/+|\/+$/g, '') || '/';
+      })(),
       // 日记（有日期任务）所在文件夹：相对库根目录，默认 '/' = 库根；扫描其及子目录下文件名含日期的笔记
       journalFolder: data.journalFolder || '/',
       // 日记文件宽松匹配：默认开；开启时从文件名任意位置抽取日期（兼容各种个性化命名），
@@ -313,10 +318,15 @@ export default class DadaTodoPlugin extends Plugin {
         if (!p.syncSince) p.syncSince = Date.now() - 30 * 60000;
         return p;
       })(),
-      // [project-view] 反向同步的忽略 / 提醒记录（数组持久化；此前漏透传导致重启丢失，一并补上）
+      // [project-view] 反向同步的工作区归属（项目由 frontmatter cwd 决定，这里存日记 / 忽略）：
+      // 三选一互斥；未记录的工作区默认忽略，不回传
       projectIgnoredThreads: Array.isArray(data.projectIgnoredThreads) ? data.projectIgnoredThreads : [],
       projectIgnoredWorkspaces: Array.isArray(data.projectIgnoredWorkspaces) ? data.projectIgnoredWorkspaces : [],
-      projectNotifiedWorkspaces: Array.isArray(data.projectNotifiedWorkspaces) ? data.projectNotifiedWorkspaces : [],
+      projectJournalWorkspaces: Array.isArray(data.projectJournalWorkspaces) ? data.projectJournalWorkspaces : [],
+      // 工作区级 LLM 开关：记录显式关闭 LLM 的 cwd（默认开）
+      projectLlmDisabledWorkspaces: Array.isArray(data.projectLlmDisabledWorkspaces) ? data.projectLlmDisabledWorkspaces : [],
+      // 委派承载文件：在项目根/日记文件夹之外的普通笔记里委派时登记，反向同步一并扫描
+      projectDelegationFiles: Array.isArray(data.projectDelegationFiles) ? data.projectDelegationFiles : [],
       // 任务到点提醒总开关：默认关（避免更新后对所有任务突然弹通知），开启后即时生效并自带提示音
       remindEnabled: data.remindEnabled === true,
       // 提醒通道：system=系统通知（桌面端，需授权，不可用自动回落）/ in-app=只用 Obsidian 内提示

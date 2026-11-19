@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { formatDelegationLine, parseDelegationLine, T3_MARK } from './delegate-line.js';
+import { rewriteSessionLine, locateSessionLine } from './session-line.js';
 import { applySummaryToLines } from './summarize-apply.js';
 import { buildTranscript, buildSummaryPrompt, countUserPrompts } from './summarize-llm.js';
 import { callSummaryLlm } from './summarize-llm-io.js';
@@ -25,6 +25,17 @@ export function findT3Binary(configured = '') {
     try { if (fs.existsSync(p)) return p; } catch { /* next */ }
   }
   return 't3';
+}
+
+// 全文档行号（含 frontmatter）→ 正文行号。编辑器 CM6 给的是前者，落盘按后者。
+async function toBodyLineNo(plugin, filePath, lineNo, basis) {
+  if (basis !== 'document' || !filePath) return lineNo;
+  const f = plugin.app.vault.getAbstractFileByPath(filePath);
+  if (!f) return lineNo;
+  const raw = String(await plugin.app.vault.read(f));
+  const m = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(raw);
+  const fmLines = m ? m[0].split('\n').length - 1 : 0;
+  return Math.max(0, lineNo - fmLines);
 }
 
 export function parseT3Output(text) {
@@ -91,38 +102,29 @@ export async function startDelegation(plugin, rt, opts) {
   const binary = findT3Binary(settings.t3Binary);
   const maxChars = Number(settings.summaryMaxChars) || 200;
 
+  // 编辑器纸飞机传的是「含 frontmatter 的全文档行号」，项目页传的已经是正文行号；
+  // 落盘统一按正文行号，否则子行会整体下移 frontmatter 行数、甚至被追加到文件末尾。
+  const parentLineNo = await toBodyLineNo(plugin, node.filePath, task.lineNo, opts.lineNoBasis);
+  // 占位行的临时 id：会话 id 要等 CLI 跑起来才有，回填前靠它唯一定位，避免并发委派串行
+  const pendingId = Math.random().toString(36).slice(2, 10);
   // 委派发出即显示委派内容摘要，而不是「进行中…」——发出去就能看到委派了什么
-  const debut = await rt.appendDelegation(plugin, node, task.lineNo, {
-    state: 'running', summary: summarize(prompt, maxChars) || '进行中…', threadId: ''
+  const debut = await rt.appendDelegation(plugin, node, parentLineNo, {
+    state: 'running', summary: summarize(prompt, maxChars) || '进行中…', threadId: '', pendingId
   });
   const lineNo = debut.lineNo;
 
-  // 定位本委派的子行：只在「本委派自己的占位行（创建时的 lineNo）」或「已带该 threadId
-  // 的行」上写。不再全文件找任意「进行中…」占位——并发委派时那会把别的会话回填到自己头上。
-  const locateOwnLine = (lines, threadId) => {
-    if (threadId) {
-      const at = lines.findIndex((l) => {
-        const d = parseDelegationLine(l);
-        return d && d.threadId === threadId;
-      });
-      if (at >= 0) return at;
-    }
-    if (lines[lineNo] != null && /进行中|等你回答/.test(lines[lineNo])) {
-      const d = parseDelegationLine(lines[lineNo]);
-      // 占位行还没被其他会话回填（无 threadId 或空）才可认领
-      if (!d || !d.threadId) return lineNo;
-    }
-    return -1;
-  };
+  // 定位本委派的子行：真实 threadId → 占位 id → 插入时行号。
+  // 不再按「进行中」文本认领——占位行显示的是 prompt 摘要，旧条件永远匹配不上。
+  const locateOwnLine = (lines, threadId) => locateSessionLine(lines, { threadId, pendingId, cachedLineNo: lineNo });
 
   const finishLine = async (threadId, state, summary) => {
     const f = plugin.app.vault.getAbstractFileByPath(node.filePath);
     if (!f) return;
     const { head, lines } = (rt.splitFile ? rt.splitFile(await plugin.app.vault.read(f)) : { head: '', lines: String(await plugin.app.vault.read(f)).split('\n') });
-    const target = formatDelegationLine({ state, summary, threadId });
     const at = locateOwnLine(lines, threadId);
     if (at < 0) return;
-    lines[at] = target;
+    // 只改状态/摘要/标记，保留缩进与父行类型
+    lines[at] = rewriteSessionLine(lines[at], { state, title: summary, threadId });
     await plugin.app.vault.modify(f, rt.joinFile ? rt.joinFile(head, lines) : lines.join('\n'));
   };
 
@@ -168,18 +170,20 @@ export async function startDelegation(plugin, rt, opts) {
     } catch { /* ignore */ }
   }
   if (result.code === 0) {
-    await finishWithSummary(plugin, rt, node, lineNo, threadId, 'completed', { prompt, fallback: summarize(result.reply, maxChars) || '完成', settings, dbPath: t3DbPath() });
+    await finishWithSummary(plugin, rt, node, lineNo, threadId, 'completed', { prompt, fallback: summarize(result.reply, maxChars) || '完成', settings, dbPath: t3DbPath(), pendingId });
   } else if (result.code === 2) {
     await finishLine(threadId, 'awaiting', '等你回答…');
   } else {
-    await finishWithSummary(plugin, rt, node, lineNo, threadId, 'failed', { prompt, fallback: summarize(result.stderr || result.reply, maxChars) || '失败', settings, dbPath: t3DbPath() });
+    await finishWithSummary(plugin, rt, node, lineNo, threadId, 'failed', { prompt, fallback: summarize(result.stderr || result.reply, maxChars) || '失败', settings, dbPath: t3DbPath(), pendingId });
   }
+  // 承载文件登记：普通笔记不在项目根/日记夹，反向同步也要能回到这一行
+  try { if (typeof rt.registerDelegationFile === 'function') await rt.registerDelegationFile(plugin, node.filePath); } catch { /* 登记失败不影响委派 */ }
   return { threadId, code: result.code };
 }
 
 // 完成路径：优先 LLM 总结（标题+分点），失败回退到截断文本。
 // 统计已总结的 user prompt 数记进 #count，反向同步据此判断是否需要再总结。
-async function finishWithSummary(plugin, rt, node, lineNo, threadId, state, { prompt, fallback, settings, dbPath }) {
+async function finishWithSummary(plugin, rt, node, lineNo, threadId, state, { prompt, fallback, settings, dbPath, pendingId = '' }) {
   let summary = null;
   if (threadId) {
     summary = await summarizeThread(plugin, {
@@ -191,8 +195,8 @@ async function finishWithSummary(plugin, rt, node, lineNo, threadId, state, { pr
   const f = plugin.app.vault.getAbstractFileByPath(node.filePath);
   if (!f) return;
   const { head, lines } = rt.splitFile(await plugin.app.vault.read(f));
-  // 行号漂移安全定位（与 finishLine 同规则：threadId 优先，占位行需未回填才可认领）
-  const at = locateOwnLine(lines, threadId);
+  // 行号漂移安全定位（与 finishLine 同规则：threadId → 占位 id → 插入行号）
+  const at = locateSessionLine(lines, { threadId, pendingId, cachedLineNo: lineNo });
   if (at < 0) return;
   const payload = summary
     ? { state, threadId, summarizedPromptCount: summary.promptCount, title: summary.title, points: summary.points }
@@ -200,7 +204,7 @@ async function finishWithSummary(plugin, rt, node, lineNo, threadId, state, { pr
   const title = summary ? summary.title : fallback;
   const r = applySummaryToLines(lines, at, { ...payload, title });
   if (!r.ok) {
-    lines[at] = formatDelegationLine({ state, summary: fallback, threadId });
+    lines[at] = rewriteSessionLine(lines[at], { state, title: fallback, threadId });
   }
   await plugin.app.vault.modify(f, rt.joinFile(head, lines));
 }

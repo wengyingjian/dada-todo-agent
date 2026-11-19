@@ -2,7 +2,7 @@
 // 纯函数（SQL、行映射、归属）可单测；I/O 集中在 queryThreads。
 
 import { execFile as nodeExecFile } from 'node:child_process';
-import { matchProjectByCwd } from './index.js';
+import { matchProjectByCwd, normalizeCwd } from './index.js';
 import { stateFromRun } from './delegate-line.js';
 
 export const T3_SESSION_FILTER = "t.thread_id NOT LIKE 'import:%' AND t.thread_id NOT LIKE 'thread:provider:%'";
@@ -103,71 +103,50 @@ export function chooseOwner(cwd, nodes) {
   return node ? { type: 'project', node } : null;
 }
 
-// 归属分类：'project'（命中项目）/ 'ignored'（cwd 命中已忽略工作区，整条跳过）/ 'unknown'（无匹配）。
-// 项目命中优先于忽略列表（忽略父目录时子目录仍可建项目）；忽略判断与 matchProjectByCwd
-// 同口径：相等或以 `<忽略项>/` 开头（两侧都去掉尾斜杠再比）。
-export function classifyWorkspace(cwd, nodes, ignored) {
-  const owner = chooseOwner(cwd, nodes);
-  if (owner) return owner;
-  const target = String(cwd || '').trim().replace(/\/+$/, '');
-  for (const ig of ignored || []) {
-    const n = String(ig || '').trim().replace(/\/+$/, '');
+// cwd 是否命中某个归属列表（相等或以 `<项>/` 开头，最长前缀语义由调用方比较长度）
+export function cwdInList(cwd, list) {
+  const target = normalizeCwd(cwd);
+  if (!target) return false;
+  for (const raw of list || []) {
+    const n = normalizeCwd(raw);
     if (!n) continue;
-    if (target === n || target.startsWith(n + '/')) return { type: 'ignored' };
+    if (target === n || target.startsWith(n + '/')) return true;
   }
-  return { type: 'unknown' };
+  return false;
 }
 
-// 未知工作区提醒的去重过滤（纯函数，落盘见 runtime.markUnmatchedNotified）：
-// cwds 是 [{ cwd, count }]（count 为本轮该 cwd 的会话数，缺省 0），
-// 过滤出「首次见到」的条目，返回弹窗条目 [{ cwd, name, count }] 与待记入的 newCwds
-export function collectUnmatched(cwds, notified) {
-  const seen = new Set(notified || []);
-  const items = [];
-  const newCwds = [];
-  for (const raw of cwds || []) {
-    const cwd = String(typeof raw === 'string' ? raw : (raw && raw.cwd) || '').trim().replace(/\/+$/, '');
-    const count = (typeof raw === 'object' && raw && Number(raw.count)) || 0;
-    if (!cwd || seen.has(cwd)) continue;
-    seen.add(cwd);
-    newCwds.push(cwd);
-    items.push({ cwd, name: cwd.split('/').pop() || cwd, count });
-  }
-  return { items, newCwds };
+// 归属分类：只有三种——'project' / 'journal' / 'ignored'，未设置默认 'ignored'。
+// 三个来源（项目 cwd、日记列表、忽略列表）按「最长前缀」竞争：更具体的设置覆盖父目录，
+// 因此三个状态可以自由切换、互相覆盖。同一前缀撞车时：显式忽略 > 显式日记 > 自有项目 >
+// 继承/默认 cwd 的项目。显式状态排在项目前面，切换状态时无需清空项目 cwd（避免来回切
+// 产生重复项目）；反之设置项目 cwd 时会清掉显式列表（见 setProjectCwd）。
+export function classifyWorkspace(cwd, nodes, ignored, journal) {
+  const target = normalizeCwd(cwd);
+  if (!target) return { type: 'ignored', implicit: true };
+  let best = null;
+  const consider = (raw, type, extra) => {
+    const n = normalizeCwd(raw);
+    if (!n) return;
+    if (!(target === n || target.startsWith(n + '/'))) return;
+    const ownProject = type === 'project' && normalizeCwd(extra && extra.ownCwd) !== '';
+    const rank = type === 'ignored' ? 3 : type === 'journal' ? 2 : (ownProject ? 1 : 0);
+    if (!best || n.length > best.len || (n.length === best.len && rank > best.rank)) {
+      best = { len: n.length, rank, type, extra };
+    }
+  };
+  for (const node of nodes || []) consider(node.cwd, 'project', node);
+  for (const raw of ignored || []) consider(raw, 'ignored');
+  for (const raw of journal || []) consider(raw, 'journal');
+  if (!best) return { type: 'ignored', implicit: true };
+  return best.extra ? { type: best.type, node: best.extra, implicit: false } : { type: best.type, implicit: false };
 }
 
-// 全量会话按 cwd 汇总（手动同步弹窗的数据源；纯函数便于单测）。
-// threads: queryThreads 全量结果；nodes: 项目索引节点；ignored: 已忽略工作区
-// 返回按 cwd 前缀最长匹配归组的条目：[{ cwd, name, total, unbound, bound, ignored, projectDir }]
-// cwd 空的会话归入 '(无 cwd)' 组。
-export function summarizeThreadsByCwd(threads, nodes, ignored) {
-  const norm = (s) => String(s || '').trim().replace(/\/+$/, '');
-  const groups = new Map();
-  for (const t of threads || []) {
-    const cwd = norm(t.cwd) || '(无 cwd)';
-    let g = groups.get(cwd);
-    if (!g) { g = { cwd, name: cwd.split('/').pop() || cwd, total: 0, unbound: 0, bound: 0, ignored: false, projectDir: '' }; groups.set(cwd, g); }
-    g.total += 1;
-  }
-  // 每组标注归属：ignored（命中忽略列表）或 projectDir（最长前缀命中的项目）
-  for (const g of groups.values()) {
-    if (g.cwd === '(无 cwd)') continue;
-    const target = norm(g.cwd);
-    let owner = null;
-    for (const n of nodes || []) {
-      const c = norm(n.cwd);
-      if (!c) continue;
-      if (target === c || target.startsWith(c + '/')) {
-        if (!owner || c.length > norm(owner.cwd).length) owner = n;
-      }
-    }
-    if (owner) g.projectDir = owner.dirPath || '';
-    for (const ig of ignored || []) {
-      const n = norm(ig);
-      if (n && (target === n || target.startsWith(n + '/'))) { g.ignored = true; break; }
-    }
-  }
-  return Array.from(groups.values()).sort((a, b) => b.total - a.total);
+// 未绑定会话的去向：'project' / 'journal' 才落盘；其余（含默认忽略）一律 'skip'。
+export function unboundTarget(cls) {
+  if (!cls) return 'skip';
+  if (cls.type === 'project') return 'project';
+  if (cls.type === 'journal') return 'journal';
+  return 'skip';
 }
 
 // 只读查询：返回线程数组；任何失败都返回空数组（调用方记日志，不弹窗）

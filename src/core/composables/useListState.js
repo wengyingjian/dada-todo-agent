@@ -4,7 +4,7 @@
 //   - 待办分桶、过期顺延（ConfirmModal）
 // 依赖经 hooks 注入（tasks / view / plugin 取自宿主实例，错误与偏好持久化回调宿主），
 // 返回 ref / computed / methods 的平铺对象，供 Options API 组件在 setup() 中展开绑定。
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { Notice } from 'obsidian';
 import { Tasks } from './useTasks.js';
 import { weekdayLong, weekdayShort, priorityRank } from './tasks-logic.js';
@@ -47,6 +47,14 @@ export function useListState({ tasks, checklists, view, plugin, setError, reload
   const activeList = ref('');
   const checklistTasks = ref([]);
   const selectedGuid = ref('');
+  // 选中的清单被归档 / 删除后从列表消失：清空选择回到「全部任务」，避免停留在幽灵清单上
+  watch(checklists, (lists) => {
+    if (activeList.value && !(lists || []).some((x) => x.key === activeList.value)) {
+      activeList.value = '';
+      checklistTasks.value = [];
+      selectedGuid.value = '';
+    }
+  });
   const quick = ref('');
   const adding = ref(false);
   // 顺延（原生 ConfirmModal 防重入）

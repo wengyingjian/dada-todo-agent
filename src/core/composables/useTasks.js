@@ -5,7 +5,7 @@ import {
   loadAll, loadChecklists, loadByList, loadByDate, getDetail,
   loadChecklistGroups, collectTags,
   createTask, createChecklistTask, updateTask, deleteTask, toggleTask, setChecklistStatus, createSubtask, listSubtasks,
-  moveChecklistTask
+  moveChecklistTask, createChecklist, setChecklistArchived
 } from '../api/tasks.js';
 
 // ---------- 纯函数 ----------
@@ -46,6 +46,10 @@ const api = {
   async loadChecklists() { return (await unwrap(loadChecklists())).items || []; },
   async loadByList(listKey) { return (await unwrap(loadByList(listKey))).items || []; },
   async loadChecklistGroups(listKey) { return await unwrap(loadChecklistGroups(listKey)); },
+  // 新建清单：名称必填、cwd 可选。返回 { key:'cl:相对路径', name, total:0, done:0 }，形状与 loadChecklists 的项一致
+  async createChecklist(name, opts = {}) { return (await unwrap(createChecklist(name, opts))).item; },
+  // 归档 / 取消归档整份清单（frontmatter tags 增删 archived）
+  async setChecklistArchived(listKey, archived = true) { return await unwrap(setChecklistArchived(listKey, archived)); },
   async loadByDate(dateKey) { return (await unwrap(loadByDate(dateKey))).items || []; },
   async getDetail(guid) {
     const items = await this.loadByDate(String(guid || '').split('#')[0]);

@@ -107,6 +107,7 @@ import ProjectTaskList from './task-list.vue';
 import SessionPane from './session-pane.vue';
 import * as rt from './runtime.js';
 import { startDelegation } from './delegate.js';
+import { stripSessionMark, sessionThreadIdOf } from './session-line.js';
 import { VueModal } from '../core/ui/VueModal.js';
 import DelegateModal from './DelegateModal.vue';
 import { pickFolder } from './electron-dialog.js';
@@ -265,10 +266,12 @@ export default {
       await this.refreshActive();
     },
     async onEdit(task) {
-      const next = await this.ask('修改任务', task.summary);
+      // task.summary 已由解析层剥掉绑定标记；updateTask 重写行时会从 node.t3Mark 原样接回
+      const title = stripSessionMark(task.summary);
+      const next = await this.ask('修改任务', title);
       if (next == null) return;
       const text = String(next).trim();
-      if (!text || text === task.summary) return;
+      if (!text || text === title) return;
       const r = await rt.editTask(this.plugin, task, { summary: text });
       if (!r || !r.ok) new Notice('修改失败：' + (r && r.reason || 'unknown'));
       await this.refreshActive();
@@ -276,6 +279,9 @@ export default {
     async onRemove(task) {
       const dels = this.delsByLine[task.lineNo] || [];
       for (const d of dels) if (d.threadId) await rt.ignoreThread(this.plugin, d.threadId);
+      // 同步任务行自身也绑定着会话：删除后加入忽略列表，避免下次同步又建一条
+      const selfId = sessionThreadIdOf(task.t3Mark || '');
+      if (selfId) await rt.ignoreThread(this.plugin, selfId);
       const r = await rt.removeTask(this.plugin, task);
       if (!r || !r.ok) new Notice('删除失败：' + (r && r.reason || 'unknown'));
       await this.refresh();
@@ -296,14 +302,14 @@ export default {
       else if (r.archivePath) new Notice(`已归档 ${r.moved} 条 → ${r.archivePath.split('/').pop()}`);
       await this.refresh();
     },
-    // 全量导入/搬回已统一到设置页「手动同步」入口（ManualSyncModal）
+    // 全量导入/搬回已统一到设置页「项目」tab 的工作区管理里（每个 cwd 一行）
     openDelegate(task) {
       const node = this.activeNode;
       if (!node) return;
       // 委派弹窗：DelegateModal 经 VueModal 挂载，与编辑器纸飞机共用同一组件
       new VueModal(this.plugin.app, DelegateModal, {
         open: true,
-        prompt: task.summary,
+        prompt: stripSessionMark(task.summary),
         cwd: node.cwd || '',
         onConfirm: async ({ prompt, cwd }) => {
           if (!cwd) { new Notice('请先为项目设置 cwd'); return; }

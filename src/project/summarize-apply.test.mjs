@@ -70,9 +70,18 @@ test('replaceSummaryInLines：旧块无分点、新块有分点,正确插入不�
   ]);
 });
 
-test('applySummaryToLines：行号越界/非委派行返回 ok:false', () => {
+test('applySummaryToLines：行号越界 / 非任务行返回 ok:false；无标记任务行可落标记', () => {
   assert.equal(applySummaryToLines(['- [ ] x'], 5, { threadId: ID }).ok, false);
-  assert.equal(applySummaryToLines(['- [ ] 无标记行'], 0, { threadId: ID }).ok, false);
+  assert.equal(applySummaryToLines(['普通正文行'], 0, { threadId: ID }).ok, false);
+  // 同步新建的单级任务：先建普通任务行，再由总结块补上标记与描述
+  const lines = ['- [ ] 19:48 hello 📅 2026-11-19'];
+  const r = applySummaryToLines(lines, 0, {
+    state: 'completed', threadId: ID, summarizedPromptCount: 1, title: '总结标题', points: ['要点']
+  });
+  assert.equal(r.ok, true);
+  // 时间前缀与日期徽标必须保留
+  assert.equal(lines[0], `- [x] 19:48 总结标题 📅 2026-11-19  ⚡ t3:${ID}#1`);
+  assert.equal(lines[1], '  1. 要点');
 });
 
 // ---------- bugfix 回归: 行号漂移下按 threadId 现场定位 ----------
@@ -99,4 +108,23 @@ test('locateDelegationLine: 缓存行号仍然准确时直接命中', () => {
 
 test('locateDelegationLine: threadId 不存在返回 -1', () => {
   assert.equal(locateDelegationLine(['- [ ] A'], 'aaaaaaaa-1111-2222-3333-444444444444', 0), -1);
+});
+
+test('replaceSummaryInLines：搬组后分点行变成「- 1. …」也能识别并整体替换', () => {
+  // 块经 core serializeBlock 搬组后，描述行会写成 `\t- 1. …`；旧正则认不出会留残行
+  const lines = [
+    `- [x] 旧标题  ⚡ t3:${ID}#2`,
+    '\t- 1. 旧要点一',
+    '\t- 2. 旧要点二',
+    '### 待处理'
+  ];
+  const r = replaceSummaryInLines(lines, 0, {
+    state: 'completed', threadId: ID, summarizedPromptCount: 3,
+    title: '新标题', points: ['新要点']
+  });
+  assert.equal(r.ok, true);
+  assert.equal(lines.length, 3);
+  assert.equal(lines[0], `- [x] 新标题  ⚡ t3:${ID}#3`);
+  assert.equal(lines[1], '  1. 新要点');
+  assert.equal(lines[2], '### 待处理');
 });

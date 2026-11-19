@@ -195,7 +195,15 @@ function parseTaskText(raw) {
   return Object.assign(meta, { summary: text.replace(/\s+/g, ' ').trim(), time, timeEnd });
 }
 
+// 会话绑定标记（`⚡ t3:<id>#count`）：不属于标题，解析时抽到 node.t3Mark，
+// 序列化时统一追加在行尾。这样所有视图/编辑弹窗看到的 summary 都是干净标题，
+// 任何一次编辑、勾选、搬组重写都不会丢标记，也不会把标记排到日期前面。
+const SESSION_MARK_RE = /\s*(⚡\s*t3:\S+)\s*$/;
+
 function makeNode(lineNo, indentStr, mark, text) {
+  const mm = SESSION_MARK_RE.exec(String(text == null ? '' : text));
+  const t3Mark = mm ? mm[1] : '';
+  const body = mm ? text.slice(0, mm.index) : text;
   return Object.assign({
     lineNo,
     indent: indentStr.length,
@@ -203,10 +211,11 @@ function makeNode(lineNo, indentStr, mark, text) {
     completed: String(mark).toLowerCase() === 'x',
     cancelMark: String(mark) === '-', // - [-] 标记（cancelled 为 ❌ 日期串，两者独立）
     cancelled: '',
+    t3Mark,
     descLines: [],
     descTexts: [],
     children: []
-  }, parseTaskText(text));
+  }, parseTaskText(body));
 }
 
 // 正文 → { lines, roots }（roots 为顶层任务树，children 为子任务）
@@ -456,6 +465,8 @@ export function toRecord(dateKey, node, opts = {}) {
     completed,
     cancelled: !!(node.cancelMark || node.cancelled),
     cancelledAt: node.cancelled ? dateToMs(node.cancelled) : null,
+    // 会话绑定标记（`⚡ t3:<id>`，已从 summary 剥离）；删除任务时据此忽略该会话
+    t3Mark: node.t3Mark || '',
     completedAt: completed && node.done ? dateToMs(node.done) : null,
     dueAt,
     startAt,
@@ -495,6 +506,8 @@ function serializeTaskText(node) {
   if (node.completed && node.done) parts.push('✅ ' + node.done);
   if (node.cancelled) parts.push('❌ ' + node.cancelled);
   if (node.recurrence) parts.push(RECURRENCE_CHAR + ' ' + node.recurrence);
+  // 绑定标记永远在行尾（日期之后），同步侧按行尾格式解析时间/日期
+  if (node.t3Mark) parts.push(node.t3Mark);
   const body = parts.join(' ');
   const timePrefix = node.time ? (node.time + (node.timeEnd ? '-' + node.timeEnd : '')) : '';
   return (timePrefix ? timePrefix + ' ' : '') + body;
@@ -529,7 +542,7 @@ export function nodeFromTask(task, dateKey, opts = {}) {
     summary: String(t.summary || '').trim(),
     time,
     timeEnd,
-    created: '', start: '', due: '', cancelled: '',
+    created: '', start: '', due: '', cancelled: '', t3Mark: '',
     // ⏳ 计划日期（YYYY-MM-DD）：来自编辑弹窗的 scheduledDate 字段（issue #13）
     scheduled: String(t.scheduledDate || '').trim(),
     priority: t.priority || '',

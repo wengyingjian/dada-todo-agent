@@ -1,0 +1,367 @@
+/* 会话侧边栏样式：原样取自 obsidian-agent-deck styles.css（Apache-2.0）。
+   仅把根选择器 .ad-view 换成 .dada-sessions，声明本身逐条保留，避免改版式。
+   来源：https://github.com/MatsuriMW/obsidian-agent-deck */
+
+/* src/styles/base/tokens.css */
+.dada-sessions {
+  --ad-radius: 14px;
+  --ad-radius-sm: 10px;
+  --ad-line: var(--background-modifier-border);
+  --ad-surface: var(--background-secondary);
+  --ad-surface-2: var(--background-secondary-alt);
+  --ad-ink: var(--text-normal);
+  --ad-muted: var(--text-muted);
+  --ad-faint: var(--text-faint);
+  --ad-accent: #746d94;
+  --ad-good: #6f8f7c;
+  --ad-warn: #a9845f;
+  --ad-bad: #a86f6d;
+  --ad-star: #b39a6a;
+  --ad-shadow: 0 10px 30px rgba(55, 48, 42, .08);
+  --ad-figure:
+    "SF Mono",
+    "JetBrains Mono",
+    ui-monospace,
+    monospace;
+}
+
+.dada-sessions {
+  text-align: left;
+}
+
+/* src/styles/base/atoms.css */
+.dada-sessions :is(.ad-icon, .ad-glyph, .ad-arrow__icon, .ad-state__icon) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.dada-sessions .ad-icon svg {
+  width: 1em;
+  height: 1em;
+  stroke-width: 2;
+}
+.dada-sessions .ad-glyph {
+  width: 1em;
+  height: 1em;
+  flex: none;
+}
+.dada-sessions .ad-glyph svg {
+  width: 1em;
+  height: 1em;
+}
+.dada-sessions .ad-glyph.ad-glyph--img {
+  overflow: hidden;
+  border-radius: 24%;
+}
+.dada-sessions .ad-agentimg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 24%;
+  -webkit-user-drag: none;
+}
+.dada-sessions .ad-state__icon {
+  --ad-ico: 10px;
+}
+.dada-sessions .ad-arrow__icon {
+  --ad-ico: 14px;
+  color: var(--text-muted);
+}
+.dada-sessions .ad-state__icon svg {
+  width: var(--ad-ico);
+  height: var(--ad-ico);
+}
+.dada-sessions .ad-arrow__icon svg {
+  width: var(--ad-ico) !important;
+  height: var(--ad-ico) !important;
+  stroke-width: 2;
+}
+.dada-sessions .ad-arrow {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  height: auto;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.dada-sessions .ad-arrow {
+  color: var(--ad-muted);
+  font-size: 14px;
+  border-radius: 7px;
+  width: 22px;
+  height: 22px;
+}
+.dada-sessions .ad-arrow:hover {
+  color: var(--ad-ink);
+  background: var(--background-modifier-hover);
+}
+.dada-sessions .ad-arrow svg {
+  width: 14px !important;
+  height: 14px !important;
+}
+.dada-sessions .ad-empty {
+  text-align: center;
+  padding: 22px 12px;
+  border: 1px dashed var(--ad-line);
+  border-radius: var(--ad-radius);
+  color: var(--ad-muted);
+}
+.dada-sessions .ad-empty .ad-empty__title {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ad-ink);
+}
+.dada-sessions .ad-empty .ad-empty__sub {
+  font-size: 10px;
+  margin-top: 3px;
+}
+
+/* src/styles/base/lattice.css */
+.dada-sessions .ad-lattice {
+  --ad-ll-cell: 3px;
+  --ad-ll-gap: 1px;
+  --ad-ll-idle: .28;
+  display: inline-grid;
+  grid-template-columns: repeat(3, var(--ad-ll-cell));
+  gap: var(--ad-ll-gap);
+  flex: none;
+  vertical-align: middle;
+}
+.dada-sessions .ad-lattice .ad-lattice__cell {
+  width: var(--ad-ll-cell);
+  height: var(--ad-ll-cell);
+  border-radius: 50%;
+  background: currentColor;
+  opacity: var(--ad-ll-idle);
+  animation: ad-ll-on var(--ad-ll-cycle) cubic-bezier(.77, 0, .175, 1) infinite;
+}
+.dada-sessions .ad-lattice .ad-lattice__cell[data-hole] {
+  animation: none;
+  opacity: calc(var(--ad-ll-idle) * .47);
+}
+
+/* src/styles/views/dashboard-sections.css */
+.dada-sessions .ad-sec {
+  margin-top: 16px;
+}
+.dada-sessions .ad-sec:first-child {
+  margin-top: 0;
+}
+.dada-sessions .ad-sec .ad-sechead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+.dada-sessions .ad-sec .ad-sechead__title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -.01em;
+}
+.dada-sessions .ad-sec .ad-sechead__sub {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ad-muted);
+}
+.dada-sessions .ad-sessionlist {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* src/styles/views/dashboard-cards.css */
+:where(.theme-light) .dada-sessions .ad-sess {
+  box-shadow: 0 1px 0 rgba(0, 0, 0, .02);
+}
+.dada-sessions .ad-sess {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 22px;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid var(--ad-line);
+  border-radius: var(--ad-radius-sm);
+  background: var(--ad-surface);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition:
+    transform .16s ease,
+    border-color .16s ease,
+    background .16s ease;
+}
+.dada-sessions .ad-sess::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--ad-agent);
+  opacity: .8;
+}
+.dada-sessions .ad-sess:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--ad-agent) 38%, var(--ad-line));
+  background: var(--background-modifier-hover);
+}
+.dada-sessions .ad-sess.is-live {
+  border-color: color-mix(in srgb, var(--ad-agent) 30%, var(--ad-line));
+}
+.dada-sessions .ad-sess .ad-sess__mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ad-agent-soft);
+  color: var(--ad-agent);
+  font-size: 12px;
+}
+.dada-sessions .ad-sess .ad-sess__mark .ad-glyph {
+  width: 18px;
+  height: 18px;
+}
+.dada-sessions .ad-sess .ad-sess__mark svg {
+  width: 12px;
+  height: 12px;
+}
+.dada-sessions .ad-sess .ad-sess__body {
+  min-width: 0;
+}
+.dada-sessions .ad-sess .ad-sess__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.dada-sessions .ad-sess .ad-sess__name {
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dada-sessions .ad-sess .ad-sess__sub {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+  color: var(--ad-muted);
+  font-size: 10px;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.dada-sessions .ad-sess .ad-sess__time {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  color: var(--ad-faint);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.dada-sessions .ad-sess .ad-sess__cwd,
+.dada-sessions .ad-sess .ad-sess__step {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dada-sessions .ad-sess .ad-sess__prog {
+  color: var(--ad-agent);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.dada-sessions .ad-sess .ad-sess__step {
+  color: var(--ad-faint);
+}
+.dada-sessions .ad-sess .ad-sess__tok {
+  color: var(--ad-agent);
+}
+.dada-sessions .ad-state {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: 1px 5px;
+  border-radius: 999px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.dada-sessions .ad-state.is-live {
+  --ad-state-tone: var(--ad-good);
+  animation: ad-pulse 1.8s ease-in-out infinite;
+}
+.dada-sessions .ad-state.is-wait {
+  --ad-state-tone: var(--ad-warn);
+}
+.dada-sessions .ad-state.is-error {
+  --ad-state-tone: var(--ad-bad);
+}
+.dada-sessions .ad-state.is-done {
+  --ad-state-tone: var(--ad-good);
+  --ad-state-alpha: 12%;
+}
+.dada-sessions .ad-state:is(.is-live, .is-wait, .is-error, .is-done) {
+  color: var(--ad-state-tone);
+  background: color-mix(in srgb, var(--ad-state-tone) var(--ad-state-alpha, 14%), transparent);
+}
+.dada-sessions .ad-state.is-quiet {
+  color: var(--ad-muted);
+  background: var(--background-modifier-hover);
+}
+.dada-sessions .ad-state .ad-state__icon .ad-lattice {
+  --ad-ll-cell: 2.5px;
+  --ad-ll-gap: .5px;
+  margin-right: 3px;
+}
+
+/* src/styles/base/animations.css */
+@keyframes ad-pulse {
+  0%, 100% {
+    opacity: .75;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes ad-ll-on {
+  0%, 100% {
+    opacity: var(--ad-ll-idle);
+  }
+  18%, 42% {
+    opacity: 1;
+  }
+  62% {
+    opacity: var(--ad-ll-idle);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dada-sessions .ad-sess {
+    transition: none !important;
+  }
+  .dada-sessions .ad-state.is-live {
+    animation: none !important;
+  }
+  .dada-sessions .ad-lattice__cell {
+    animation-delay: 0ms !important;
+    animation-duration: 1400ms !important;
+  }
+}

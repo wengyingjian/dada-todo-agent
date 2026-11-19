@@ -12,6 +12,9 @@ import {
   nodeFromTask, locateNode, collectLineNos, todayKey, parseGuid, msToTime, dateToMs, flattenTasks,
   priorityRank, splitSummary
 } from '../composables/tasks-logic.js';
+import {
+  ARCHIVED_TAG, checklistNameError, frontmatterTags, yamlScalar
+} from '../composables/checklist-meta.js';
 
 let plugin = null;
 export function initTasksApi(p) { plugin = p; }
@@ -145,6 +148,18 @@ function checklistTags() {
   const s = plugin.settings && plugin.settings.checklistTags;
   const arr = Array.isArray(s) ? s.map((x) => String(x).trim()).filter(Boolean) : [];
   return arr.length ? arr : ['todoList'];
+}
+
+// 新建清单文件的存放文件夹（设置项 checklistFolder，默认「清单」；''/'/' = 库根）。
+// 只影响「新建」落点：已存在的清单仍按 checklistTags 全库识别，与目录无关。
+// 含 . / .. 段（越级）时返回 null，由调用方按「文件夹设置不可用」拒绝——否则拼出的 key
+// 会与真实文件路径不同源（taskFilePath 也会拒绝 ..），造出打不开的幽灵清单项。
+function checklistFolder() {
+  const raw = plugin.settings && plugin.settings.checklistFolder;
+  if (typeof raw !== 'string') return '清单';
+  const f = raw.trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^\/+|\/+$/g, '');
+  if (f && f.split('/').some((seg) => seg === '.' || seg === '..')) return null;
+  return f;
 }
 
 // 收件箱文件不存在时创建（含 frontmatter），启动时调用
@@ -388,6 +403,8 @@ function listDailyFiles() {
 }
 
 // 全库扫描：frontmatter tags 含任一「清单标记」的 md 文件 → [{ key: 'cl:<相对路径>', path, name }]
+// 已归档（tags 含 archived）的清单一律不返回：清单 / 列表视图因此看不到它，
+// 其带日期任务也不再汇入默认聚合。文件本身仍是普通笔记，可随时手动去掉标签恢复。
 // 注意：tags 数组可能含 null 项（YAML 空值），匹配前先归一化为字符串
 // 与项目视图的识别口径一致：任务/（projectsRoot）下的文件不再被排除，
 // 带 todoList 标签的项目文件（task-*.md）会同时出现在清单视图与项目视图。
@@ -400,10 +417,8 @@ function checklistFileEntries() {
     const cache = mc.getFileCache(f);
     const fm = cache && cache.frontmatter;
     if (!fm) continue;
-    const raw = fm.tags;
-    const tags = Array.isArray(raw)
-      ? raw.filter((x) => x != null).map((x) => String(x))
-      : (typeof raw === 'string' ? raw.split(',').map((s) => s.trim()) : []);
+    const tags = frontmatterTags(fm.tags);
+    if (tags.includes(ARCHIVED_TAG)) continue;
     const hit = tags.some((x) => wanted.some((t) => x === t || x.indexOf(t + '/') === 0));
     if (!hit) continue;
     const rel = f.path.replace(/\.md$/i, '');
@@ -423,6 +438,59 @@ async function listChecklists() {
   }
   items.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
   return res(200, { ok: true, count: items.length, items });
+}
+
+// 新建清单文件：名称必填，cwd 可选（写入 frontmatter，供委派 / 会话归属等后续使用）。
+// 存放位置由 checklistFolder 决定（默认 清单/<名称>.md），正文只写清单标记 frontmatter
+// （分组 ### 由用户后续自行维护）。校验全部在写文件之前：
+// 空名 / 非法名 / 文件夹设置不可用 → 400，重名 → 409（绝不覆盖用户笔记）。
+export async function createChecklist(name, opts = {}) {
+  const n = String(name == null ? '' : name).trim();
+  const nameErr = checklistNameError(n);
+  if (nameErr) return res(400, { ok: false, reason: nameErr });
+  const folder = checklistFolder();
+  if (folder == null) return res(400, { ok: false, reason: 'bad_folder' });
+  const rel = folder ? `${folder}/${n}` : n;
+  const path = `${rel}.md`;
+  const v = vault();
+  if (v.getAbstractFileByPath(path)) return res(409, { ok: false, reason: 'exists' });
+  // 库内已有同名清单（可能在别的目录）：侧栏只显示文件名，重名会变成两个看不出区别的条目，
+  // 建之前就挡住，并回传已存在文件的路径，让提示能说清是哪一份。
+  const o = opts || {};
+  const same = checklistFileEntries().find((e) => e.name === n && e.path !== path);
+  if (same) return res(409, { ok: false, reason: 'exists_other', path: same.path });
+  // 清单标记取第一个即可（识别时任一命中，写一个足够）；含 YAML 特殊字符时加引号，避免被解析成非字符串
+  const tag = String(checklistTags()[0] || 'todoList');
+  const cwd = String(o.cwd == null ? '' : o.cwd).trim();
+  const head = `---\ntags:\n  - ${yamlScalar(tag)}\n${cwd ? `cwd: ${yamlScalar(cwd)}\n` : ''}---\n\n`;
+  noteSelfWrite();
+  await ensureFolder(folder);
+  try {
+    await v.create(path, head);
+  } catch (e) {
+    // 并发 / 文件树缓存未就绪导致的 already exists：按「已存在」上报，不覆盖
+    if (/already exists/i.test((e && e.message) || '')) return res(409, { ok: false, reason: 'exists' });
+    throw e;
+  }
+  const key = CL_PREFIX + rel;
+  return res(201, { ok: true, key, path, item: { key, name: n, total: 0, done: 0 } });
+}
+
+// 归档 / 取消归档整份清单：在 frontmatter tags 中增删 archived 标签。
+// 归档后 checklistFileEntries 不再返回该清单，清单 / 列表视图随之隐藏；
+// 取消归档只需再把标签去掉（当前 UI 只暴露归档入口，保留该能力便于恢复与测试）。
+export async function setChecklistArchived(listKey, archived = true) {
+  const path = taskFilePath(listKey);
+  if (!path) return res(400, { ok: false, reason: 'bad_list' });
+  const f = vault().getAbstractFileByPath(path);
+  if (!(f instanceof TFile)) return res(404, { ok: false, reason: 'not_found' });
+  noteSelfWrite();
+  await plugin.app.fileManager.processFrontMatter(f, (fm) => {
+    const tags = frontmatterTags(fm.tags).filter((t) => t !== ARCHIVED_TAG);
+    if (archived) tags.push(ARCHIVED_TAG);
+    fm.tags = tags;
+  });
+  return res(200, { ok: true, archived: !!archived });
 }
 
 // 读取单个清单，并按 ### 三级标题分组（清单文件支持用 ### 标题 作为分组分隔）。
@@ -619,11 +687,12 @@ export async function createChecklistTask(listKey, groupTitle, task) {
   } else {
     const h = headings.find((x) => x.title === groupTitle);
     if (!h) return res(404, { ok: false, reason: 'group_not_found' });
+    // 插到组内最后一个非空行之后：组尾空行（分隔下一组用的）不参与，
+    // 否则新任务会落在组标题下方的空行之后，看起来中间空了一行。
     const next = headings.find((x) => x.idx > h.idx);
-    insertAt = next ? next.idx : doc.lines.length;
-    if (!next) {
-      while (insertAt > 0 && !String(doc.lines[insertAt - 1] || '').trim()) insertAt--;
-    }
+    const end = next ? next.idx : doc.lines.length;
+    insertAt = end;
+    while (insertAt > h.idx + 1 && !String(doc.lines[insertAt - 1] || '').trim()) insertAt--;
   }
 
   const lines = doc.lines.slice();
@@ -663,8 +732,11 @@ export async function moveChecklistTask(listKey, guid, targetGroupTitle) {
   } else {
     const h = headings.find((x) => x.title === targetGroupTitle);
     if (!h) return res(404, { ok: false, reason: 'group_not_found' });
+    // 与 createChecklistTask 同规则：插到组内最后一个非空行之后，跳过组尾分隔空行
     const next = headings.find((x) => x.idx > h.idx);
-    insertAt = next ? next.idx : keep.length;
+    const end = next ? next.idx : keep.length;
+    insertAt = end;
+    while (insertAt > h.idx + 1 && !String(keep[insertAt - 1] || '').trim()) insertAt--;
   }
 
   keep.splice(insertAt, 0, ...serializeBlock(node, node.indentStr));
