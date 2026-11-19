@@ -14,7 +14,7 @@ import { groupOfState, ensureGroupHeadings, collectGroupHeadings } from './group
 import { queryThreads, chooseOwner, threadTitleOf, taskDateMeta, classifyWorkspace, collectUnmatched, summarizeThreadsByCwd } from './reverse-sync.js';
 import { summarize, summarizeThread } from './delegate.js';
 import { shouldResummarize } from './summarize-llm.js';
-import { replaceSummaryInLines, locateDelegationLine } from './summarize-apply.js';
+import { applySummaryToLines, replaceSummaryInLines, locateDelegationLine } from './summarize-apply.js';
 import { DEFAULT_SETTINGS, mergeProjectSettings } from './settings.js';
 import * as API from '../core/api/tasks.js';
 
@@ -586,30 +586,40 @@ export async function importThreadsToProject(plugin, node, opts = {}) {
     const meta = taskDateMeta(t);
     const r = unwrap(await API.createChecklistTask(key, groupOfState(t.state || 'completed'), { summary: `${meta.timePrefix}${threadTitleOf(t)}${meta.dateSuffix}` }));
     if (!r || !r.ok) { skipped += 1; continue; }
-    let delegate = {
-      state: t.state || 'completed',
-      summary: summaryOfThread(t, maxChars),
-      threadId: t.threadId
-    };
-    // LLM 总结：成功则带 #count 记录（标题+分点整块渲染），失败保持截断摘要
-    if (useLlm) {
+    const state = t.state || 'completed';
+    const fallback = summaryOfThread(t, maxChars);
+    // 先落占位子行（截断摘要），LLM 成功再就地整块替换成「标题 + 分点」（带 #count）
+    const ins = await appendDelegation(plugin, node, r.task.lineNo, { state, summary: fallback, threadId: t.threadId });
+    if (useLlm && ins.ok) {
       try {
         const sum = await summarizeThread(plugin, { threadId: t.threadId, dbPath: t3DbPath(), settings: s });
         if (sum) {
-          delegate = {
-            state: delegate.state,
+          await applySummaryAtLine(plugin, node, ins.lineNo, {
+            state,
             threadId: t.threadId,
             summarizedPromptCount: sum.promptCount,
             title: sum.title,
             points: sum.points
-          };
+          });
         }
-      } catch { /* 回落截断摘要 */ }
+      } catch { /* 回落截断摘要占位 */ }
     }
-    await appendDelegation(plugin, node, r.task.lineNo, delegate);
     imported += 1;
   }
   return { imported, skipped };
+}
+
+// 把刚插入的委派占位行替换为总结块（行号可能漂移，按 threadId 现场定位）。
+async function applySummaryAtLine(plugin, node, lineNo, summary) {
+  const file = plugin.app.vault.getAbstractFileByPath(node.filePath);
+  if (!(file instanceof TFile)) return { ok: false };
+  const { head, lines } = splitFile(await plugin.app.vault.read(file));
+  const at = locateDelegationLine(lines, summary.threadId, lineNo);
+  if (at < 0) return { ok: false, reason: 'not_found' };
+  const r = applySummaryToLines(lines, at, summary);
+  if (!r.ok) return r;
+  await plugin.app.vault.modify(file, joinFile(head, lines));
+  return { ok: true, lineNo: at };
 }
 
 // 搬回：把绑定在本项目 cwd 会话、却落在项目文件之外的委派块（典型是日记兜底）整体
