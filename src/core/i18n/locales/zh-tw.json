@@ -380,7 +380,11 @@
     "syncMinAge": "最短工作階段時長（分鐘）",
     "syncMinAgeDesc": "只同步開始超過這麼多分鐘的工作階段，避免剛送出的請求被重複登記。預設 3 分鐘，0 表示不限制。",
     "summaryMaxChars": "摘要長度（字元）",
-    "summaryMaxCharsDesc": "委派記錄裡顯示的工作階段摘要最多保留多少字元。預設 200，範圍 40–1000。"
+    "summaryMaxCharsDesc": "委派記錄裡顯示的工作階段摘要最多保留多少字元。預設 200，範圍 40–1000。",
+    "t3Provider": "T3 Code 提供方",
+    "t3ProviderDesc": "委派時傳給 T3 Code 的提供方 id。留空用專案的預設模型；新建的 T3 專案沒有預設模型時需要填。",
+    "t3Model": "T3 Code 模型",
+    "t3ModelDesc": "委派時使用的模型 id。留空用專案的預設模型；新建的 T3 專案沒有預設模型時需要填。"
   },
   "modals": {
     "linkAdd": "新增連結",

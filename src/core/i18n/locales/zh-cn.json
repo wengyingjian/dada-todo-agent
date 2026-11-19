@@ -386,7 +386,11 @@
     "syncMinAge": "最短会话时长（分钟）",
     "syncMinAgeDesc": "只同步开始超过这么多分钟的会话，避免刚发出的请求就被重复登记。默认 3 分钟，0 表示不限制。",
     "summaryMaxChars": "摘要长度（字符）",
-    "summaryMaxCharsDesc": "委派记录里显示的会话摘要最多保留多少个字符。默认 200，范围 40–1000。"
+    "summaryMaxCharsDesc": "委派记录里显示的会话摘要最多保留多少个字符。默认 200，范围 40–1000。",
+    "t3Provider": "T3 Code 提供方",
+    "t3ProviderDesc": "委派时传给 T3 Code 的提供方 id。留空用项目的默认模型；新建的 T3 项目没有默认模型时需要填。",
+    "t3Model": "T3 Code 模型",
+    "t3ModelDesc": "委派时使用的模型 id。留空用项目的默认模型；新建的 T3 项目没有默认模型时需要填。"
   },
   "modals": {
     "linkAdd": "新增链接",

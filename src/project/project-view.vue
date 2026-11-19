@@ -68,6 +68,25 @@
         </div>
       </div>
     </div>
+
+    <!-- 输入框弹窗：Electron 不支持 window.prompt，只能用自绘的 -->
+    <div v-if="askState" class="pa-modal-mask" @click.self="closeAsk(null)">
+      <div class="pa-modal pa-ask">
+        <h4>{{ askState.title }}</h4>
+        <input
+          ref="askInput"
+          v-model="askState.value"
+          class="pa-ask-input"
+          :placeholder="askState.placeholder || ''"
+          @keydown.enter.prevent="closeAsk(askState.value)"
+          @keydown.esc.prevent="closeAsk(null)"
+        />
+        <div class="pa-modal-actions">
+          <button class="pa-btn" @click="closeAsk(null)">取消</button>
+          <button class="pa-btn primary pa-ask-ok" @click="closeAsk(askState.value)">确定</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -96,6 +115,7 @@ export default {
       showSessions: true,
       showTree: false,
       modal: null,
+      askState: null,
       refreshing: false
     };
   },
@@ -173,6 +193,22 @@ export default {
       if (s.has(path)) s.delete(path); else s.add(path);
       this.openSet = s;
     },
+    // 自绘输入弹窗（Electron 里 window.prompt 不可用）：返回用户输入或 null
+    ask(title, initial = '', placeholder = '') {
+      return new Promise((resolve) => {
+        this.askState = { title, value: String(initial == null ? '' : initial), placeholder, resolve };
+        this.$nextTick(() => {
+          const el = this.$refs.askInput;
+          if (el) { el.focus(); if (el.select) el.select(); }
+        });
+      });
+    },
+    closeAsk(v) {
+      const s = this.askState;
+      if (!s) return;
+      this.askState = null;
+      s.resolve(v == null ? null : String(v));
+    },
     onSelect(n) {
       this.activeDir = n.dirPath;
       this.refreshActive().catch((e) => new Notice(String(e.message || e)));
@@ -191,7 +227,7 @@ export default {
       await this.refreshActive();
     },
     async onEdit(task) {
-      const next = window.prompt('修改任务', task.summary);
+      const next = await this.ask('修改任务', task.summary);
       if (next == null) return;
       const text = String(next).trim();
       if (!text || text === task.summary) return;
@@ -249,13 +285,13 @@ export default {
     },
     async onTreeAction(action, node) {
       if (action === 'new-child') {
-        const name = window.prompt('子项目名称', '');
+        const name = await this.ask('子项目名称', '');
         if (!name) return;
         const r = await rt.createProject(this.plugin, node.dirPath, name);
         if (!r.ok) new Notice('创建失败：' + r.reason);
         await this.refresh();
       } else if (action === 'rename') {
-        const name = window.prompt('新的项目名', node.name);
+        const name = await this.ask('新的项目名', node.name);
         if (!name || name === node.name) return;
         const r = await rt.renameProject(this.plugin, node, name);
         if (!r.ok) new Notice('重命名失败：' + r.reason);
@@ -267,7 +303,7 @@ export default {
           if (f) this.plugin.app.workspace.getLeaf(false).openFile(f);
         }
       } else if (action === 'cwd') {
-        const v = window.prompt('项目 cwd（留空则继承）', node.ownCwd || '');
+        const v = await this.ask('项目 cwd（留空则继承）', node.ownCwd || '');
         if (v == null) return;
         const r = await rt.setProjectCwd(this.plugin, node, v);
         if (!r.ok) new Notice('写入失败');
@@ -288,7 +324,7 @@ export default {
       for (const r of this.index.roots) walk(r, '');
     },
     async newRootProject() {
-      const name = window.prompt('项目名称', '');
+      const name = await this.ask('项目名称', '');
       if (!name) return;
       const r = await rt.createProject(this.plugin, '', name);
       if (!r.ok) new Notice('创建失败：' + r.reason);
@@ -398,6 +434,8 @@ export default {
   border: 1px solid var(--background-modifier-border); background: var(--background-primary);
 }
 .pa-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.pa-ask h4 { margin: 0 0 10px; font-size: 15px; }
+.pa-ask input { width: 100%; }
 .pa-view.tiny .pa-tree { position: absolute; z-index: 20; background: var(--background-primary); height: 100%; box-shadow: 0 0 12px rgba(0,0,0,.2); }
 .pa-view.tiny .pa-sessions { display: none; }
 </style>

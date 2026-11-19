@@ -2,6 +2,9 @@
 export const DEFAULT_SETTINGS = {
   projectsRoot: '任务',
   t3Binary: '',
+  // 委派时指定模型（留空用 T3 项目的默认模型）；新建的 T3 项目没有默认模型时必须填
+  t3Provider: '',
+  t3Model: '',
   projectDefaultCwd: '',
   reverseSync: true,
   reverseSyncSeconds: 60,

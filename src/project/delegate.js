@@ -128,8 +128,8 @@ export async function startDelegation(plugin, rt, opts) {
     binary,
     cwd,
     prompt,
-    provider: opts.provider || '',
-    model: opts.model || ''
+    provider: opts.provider || settings.t3Provider || '',
+    model: opts.model || settings.t3Model || ''
   });
   clearInterval(backfill);
 

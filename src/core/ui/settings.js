@@ -709,6 +709,26 @@ export class DadaTodoSettingTab extends PluginSettingTab {
           });
         });
       }),
+      row('t3Provider', 't3ProviderDesc', (s) => {
+        s.addText((tx) => {
+          tx.setPlaceholder('claudeAgent');
+          tx.setValue(plugin.settings.project.t3Provider || '');
+          tx.onChange((value) => {
+            plugin.settings.project.t3Provider = (value || '').trim();
+            plugin.saveSettings();
+          });
+        });
+      }),
+      row('t3Model', 't3ModelDesc', (s) => {
+        s.addText((tx) => {
+          tx.setPlaceholder('例如 group/flash[1m]');
+          tx.setValue(plugin.settings.project.t3Model || '');
+          tx.onChange((value) => {
+            plugin.settings.project.t3Model = (value || '').trim();
+            plugin.saveSettings();
+          });
+        });
+      }),
       row('reverseSync', 'reverseSyncDesc', (s) => {
         s.addToggle((tg) => {
           tg.setValue(plugin.settings.project.reverseSync !== false);

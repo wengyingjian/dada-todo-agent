@@ -8,7 +8,9 @@ export async function connect({ port = process.env.E2E_PORT || 9333, target = pr
   } catch (e) {
     throw new Error(`连不上调试端口 ${port}：请先退出 Obsidian，再用 --remote-debugging-port=${port} 重启（见 scripts/e2e/README.md）`);
   }
-  const page = targets.find((t) => t.type === 'page' && (t.title || '').includes(target));
+  // 可能有多个窗口（例如单独弹出的「设置」），只认主窗口（加载了 app:// 的那一个）
+  const pages = targets.filter((t) => t.type === 'page' && (t.title || '').includes(target));
+  const page = pages.find((t) => String(t.url || '').startsWith('app://')) || pages[0];
   if (!page) throw new Error(`没有找到标题含「${target}」的 Obsidian 窗口；当前：${targets.map((t) => t.title).join(' | ')}`);
 
   const ws = new WebSocket(page.webSocketDebuggerUrl);

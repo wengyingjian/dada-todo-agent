@@ -8,20 +8,35 @@
 // 所有测试数据都落在库根的 __e2e/ 下，跑完自动清理并还原插件设置。
 
 import { mkdirSync } from 'node:fs';
+import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { connect, poll } from './driver.mjs';
 
-// T3 Code 只接受「已登记项目目录内的路径」作为 cwd，所以测试用库里的一级目录：
-// 库本身就在 T3 的 projects 表里，__e2e/ 是测试专用目录，跑完删除。
+// 测试数据分两处：
+// - 库内 __e2e/：项目文件、日记，跑完删除；
+// - 库外沙盒 SANDBOX：会话的工作目录，单独登记成一个 T3 项目，跑完连同会话一起删掉，
+//   不碰库本身这个 T3 项目，也不会把测试会话留在用户正常的工作区。
 const VAULT = process.env.E2E_VAULT || path.join(homedir(), 'Documents/ObsidianVault');
+const SANDBOX = process.env.E2E_SANDBOX || path.join(homedir(), 'Documents/ObsidianWork', 'e2e-dada-todo');
+
+// 新建的 T3 项目没有默认模型，起会话必须显式给提供方与模型；沿用库项目最近用过的
+const MODEL = await (async () => {
+  const db = `${homedir()}/.t3/userdata/statev2.sqlite`;
+  const sql = `select json_extract(t.payload_json,'$.modelSelection.instanceId'), json_extract(t.payload_json,'$.modelSelection.model')
+    from orchestration_v2_projection_threads t join projection_projects p on p.project_id = t.project_id
+    where p.workspace_root = '${VAULT.replace(/'/g, "''")}' and json_extract(t.payload_json,'$.modelSelection.model') is not null
+    order by t.created_at desc limit 1;`;
+  const out = await new Promise((res) => execFile('sqlite3', ['-readonly', '-separator', '\t', db, sql], (e, o) => res(String(o || ''))));
+  const [provider, model] = out.trim().split('\t');
+  return { provider: provider || 'claudeAgent', model: model || '' };
+})();
 
 const CFG = {
   base: '__e2e',
   root: '__e2e/任务',
   journal: '__e2e/日记',
-  cwd: `${VAULT}/__e2e/cwd`,
-  journalCwd: `${VAULT}/__e2e/journal-cwd`
+  cwd: SANDBOX
 };
 
 const args = process.argv.slice(2);
@@ -38,12 +53,12 @@ const J = JSON.stringify;
 // ---------- 页面助手注入 ----------
 const INSTALL = String.raw`
 (() => {
-  if (window.__e2e && window.__e2e.__v === 5) return 'ready';
+  if (window.__e2e && window.__e2e.__v === 8) return 'ready';
   const app = window.app;
   const VIEW_SEL = '.workspace-leaf-content[data-type="dada-todo-agent-view"]';
   const root = () => document.querySelector(VIEW_SEL) || document;
   const h = {
-    __v: 5,
+    __v: 8,
     app,
     get plugin() { return app.plugins.plugins['dada-todo-agent']; },
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -87,7 +102,12 @@ const INSTALL = String.raw`
       await app.vault.create(p, text);
       return true;
     },
-    async rm(p) { const f = app.vault.getAbstractFileByPath(p); if (f) await app.vault.delete(f, true); return true; },
+    async rm(p) {
+      const f = app.vault.getAbstractFileByPath(p);
+      // 目录被外部手工删掉时缓存里还留着，删除会因 ENOENT 抛错，忽略即可
+      if (f) await app.vault.delete(f, true).catch(() => {});
+      return true;
+    },
     async openView() {
       await app.commands.executeCommandById('dada-todo-agent:open-dada-todo-agent');
       return true;
@@ -120,6 +140,16 @@ const INSTALL = String.raw`
       const el = h.nodeEl(name);
       if (!el) throw new Error('找不到项目节点 ' + name);
       el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return true;
+    },
+    // 展开树里所有折叠的节点：视图重挂载后展开状态会重置，选项目前先摊平
+    async expandAll() {
+      for (let i = 0; i < 8; i++) {
+        const carets = Array.from(root().querySelectorAll('.pa-caret')).filter((c) => c.textContent.trim() !== '▾');
+        if (!carets.length) break;
+        carets.forEach((c) => c.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+        await h.sleep(60); // 等 Vue 把子节点渲染出来再展开下一层
+      }
       return true;
     },
     ensureExpanded(name) {
@@ -158,13 +188,30 @@ const INSTALL = String.raw`
       it.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       return true;
     },
+    // 插件用自绘输入弹窗（Electron 里 window.prompt 不可用）：预先排好答案，弹窗一出现就填上并确定
     prompt(answers) {
-      if (!h.__origPrompt) h.__origPrompt = window.prompt;
-      window.__e2eAnswers = answers.slice();
-      window.prompt = () => (window.__e2eAnswers.length ? window.__e2eAnswers.shift() : null);
+      window.__e2eAnswers = (answers || []).slice();
+      if (!h.__askTimer) {
+        h.__askTimer = setInterval(async () => {
+          const el = document.querySelector('.pa-ask');
+          if (!el || el.dataset.e2eDone === '1') return;
+          if (!window.__e2eAnswers || !window.__e2eAnswers.length) return;
+          const inp = el.querySelector('.pa-ask-input');
+          if (!inp) return;
+          el.dataset.e2eDone = '1';
+          h.setVal(inp, window.__e2eAnswers.shift());
+          await h.sleep(80); // 等 v-model 把值同步进组件状态再点确定
+          const ok = el.querySelector('.pa-ask-ok');
+          if (ok) ok.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        }, 30);
+      }
       return true;
     },
-    restorePrompt() { if (h.__origPrompt) window.prompt = h.__origPrompt; return true; },
+    restorePrompt() {
+      if (h.__askTimer) { clearInterval(h.__askTimer); h.__askTimer = null; }
+      window.__e2eAnswers = [];
+      return true;
+    },
     tasks() {
       return Array.from(root().querySelectorAll('.pa-task')).map((el) => ({
         title: ((el.querySelector('.pa-task-title') || {}).textContent || '').trim(),
@@ -276,6 +323,8 @@ const P = {
     return poll(async () => { const t = await P.read(path); return t && t.includes(needle); }, { timeout, label: `${path} 包含 ${needle}` });
   },
   async selectProject(name) {
+    // 视图整块重挂载后，树会回到全部折叠状态，所以先摊平再点
+    await ev('__e2e.expandAll()');
     await P.clickNode(name);
     await poll(async () => (await P.header()).title === name, { timeout: 8000, label: '选中项目 ' + name });
     await sleep(400);
@@ -369,13 +418,15 @@ process.on('uncaughtException', (e) => { console.error(e); emergencyRestore('unc
 await P.rm(CFG.base);
 await P.mkdir(CFG.base);
 mkdirSync(CFG.cwd, { recursive: true });
-mkdirSync(CFG.journalCwd, { recursive: true });
+if (!skipSlow) await t3ProjectAdd(CFG.cwd);
 await ev(`(() => {
   const p = window.app.plugins.plugins['dada-todo-agent'];
   Object.assign(p.settings.project, ${J({
     projectsRoot: CFG.root,
     journalFolder: undefined,
     t3Binary: '',
+    t3Provider: MODEL.provider,
+    t3Model: MODEL.model,
     projectDefaultCwd: CFG.cwd,
     reverseSync: true,
     reverseSyncSeconds: 15,
@@ -400,8 +451,10 @@ await ev(`(async () => {
   return true;
 })()`);
 await P.openView();
-await P.waitView();
+// 视图壳挂载后可能停在上次用过的子视图（比如「清单」），先切到「项目」再等它渲染
+await poll(async () => (await P.count('.tk-viewpill-item')) > 0, { timeout: 15000, label: '视图壳挂载' });
 await P.switchView('project');
+await P.waitView();
 await sleep(500);
 
 // ---------- 用例 ----------
@@ -482,7 +535,7 @@ await runCase(3, 'cwd：子项目继承父级，设置后覆盖', async () => {
   await poll(async () => (await P.header()).cwd === CFG.cwd, { timeout: 8000, label: '子项目标题栏刷新 cwd' });
   const parentTxt2 = await P.read(F.工作);
   assert(parentTxt2.includes(`${CFG.cwd}/parent`), '父项目 cwd 不应被子项目改写');
-  return '父级 /tmp/dada-e2e/cwd/parent，子级 /tmp/dada-e2e/cwd';
+  return `父级 ${CFG.cwd}/parent，子级 ${CFG.cwd}`;
 });
 
 await runCase(4, '重命名项目：目录与项目文件同步改名，任务不丢，选中态保持', async () => {
@@ -824,6 +877,16 @@ await runCase(11, '同一任务连续委派两次：两条子行互不覆盖', r
 }));
 
 // ---------- 反向同步：外部起来自 T3 Code 的会话 ----------
+
+async function t3ProjectAdd(dir) {
+  try { await execT3(['project', 'add', dir, '--title', 'dada-e2e-sandbox'], { cwd: VAULT }); }
+  catch (e) { if (!/already|exists|已存在/i.test(e.message)) throw e; }
+}
+
+async function t3ProjectRemove(dir) {
+  try { await execT3(['project', 'remove', dir, '--force'], { cwd: VAULT }); } catch (e) { console.warn('清理测试项目失败：', e.message); }
+}
+
 async function execT3(args, opts = {}) {
   const { execFile } = await import('node:child_process');
   // t3 的命令要求在某个 T3 项目目录内执行；库根就是已登记项目
@@ -851,7 +914,8 @@ const externalThreadIds = [];
 
 async function startExternalThread(cwd, prompt) {
   // 直接把提示词当参数传：'-' 表示从 stdin 读，而 execFile 的 stdin 是空的
-  const out = await execT3(['thread', 'start', cwd, prompt, '--json', '--wait']);
+  const flags = MODEL.model ? ['--provider', MODEL.provider, '--model', MODEL.model] : [];
+  const out = await execT3(['thread', 'start', cwd, prompt, ...flags, '--json', '--wait']);
   let parsed = null;
   try { parsed = JSON.parse(out.slice(out.indexOf('{'), out.lastIndexOf('}') + 1)); } catch {}
   const id = parsed && (parsed.threadId || (parsed.thread && parsed.thread.id));
@@ -861,15 +925,17 @@ async function startExternalThread(cwd, prompt) {
 }
 
 await runCase(12, '反向同步：外部会话按 cwd 归属到项目', real(async () => {
-  // T3 把会话 cwd 记成项目根，所以在库根起的会话只有「项目 cwd = 库根」才归属得上
+  // T3 把会话 cwd 记成项目根，所以沙盒里起的会话只有「项目 cwd = 沙盒根」才归属得上。
+  // 兜底 cwd 改成别处，避免其它没设 cwd 的项目也继承沙盒根、抢走归属
+  await P.projSettings({ projectDefaultCwd: `${SANDBOX}/none` });
   await P.selectProject('LoopForge');
   await P.openNodeMenu('LoopForge');
   await sleep(150);
-  await P.prompt([VAULT]);
+  await P.prompt([SANDBOX]);
   await P.clickInline('设置 cwd');
-  await poll(async () => (await P.header()).cwd === VAULT, { timeout: 8000, label: '项目 cwd 设为库根' });
+  await poll(async () => (await P.header()).cwd === SANDBOX, { timeout: 8000, label: '项目 cwd 设为沙盒根' });
 
-  const id = await startExternalThread(VAULT, '反向同步用例：请只回复 OK');
+  const id = await startExternalThread(SANDBOX, '反向同步用例：请只回复 OK');
   const hit = await poll(async () => (await P.read(F.LoopForge)).includes(id), { timeout: 90000, interval: 2000, label: '同步进项目文件' });
   const txt = await P.read(F.LoopForge);
   const lines = txt.split('\n');
@@ -883,15 +949,15 @@ await runCase(12, '反向同步：外部会话按 cwd 归属到项目', real(asy
 }));
 
 await runCase(13, '反向同步：cwd 不命中项目时进当天日记', real(async () => {
-  // 先把项目 cwd 改回去，同一个库根会话就没有归属了 → 落到当天日记
+  // 把项目 cwd 指到沙盒下的子目录，同一个沙盒根会话就对不上了 → 落到当天日记
   await P.selectProject('LoopForge');
   await P.openNodeMenu('LoopForge');
   await sleep(150);
-  await P.prompt([CFG.cwd]);
+  await P.prompt([`${SANDBOX}/nested`]);
   await P.clickInline('设置 cwd');
-  await poll(async () => (await P.header()).cwd === CFG.cwd, { timeout: 8000, label: '项目 cwd 改回' });
+  await poll(async () => (await P.header()).cwd === `${SANDBOX}/nested`, { timeout: 8000, label: '项目 cwd 改到子目录' });
 
-  const id = await startExternalThread(VAULT, '日记归属用例：请只回复 OK');
+  const id = await startExternalThread(SANDBOX, '日记归属用例：请只回复 OK');
   const findJournal = async () => ev(`(async () => {
     const f = __e2e.app.vault.getFolderByPath(${J(CFG.journal)});
     if (!f) return null;
@@ -942,7 +1008,8 @@ await runCase(15, '删除自动同步来的任务后，后续扫描不再生成'
 const errors = await P.errors();
 const errLines = errors.filter((e) => !/ResizeObserver|Failed to load resource/i.test(e));
 
-// 外部会话可能已经进了测试日记；记进忽略表，免得设置还原后又被同步进真实日记
+// 删掉沙盒对应的 T3 项目：本项目下的会话一并消失，不留测试痕迹
+if (!skipSlow) await t3ProjectRemove(CFG.cwd);
 const ignoredAfter = Array.from(new Set([...(backup.projectIgnoredThreads || []), ...externalThreadIds]));
 
 await ev(`(async () => {
