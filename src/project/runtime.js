@@ -9,6 +9,7 @@ import {
 } from './index.js';
 import { isArchiveFile, pickArchiveFile } from './archive.js';
 import { extractDelegations, formatDelegationLine, parseDelegationLine, planDelegationInsert, T3_MARK } from './delegate-line.js';
+import { groupOfState, ensureGroupHeadings, collectGroupHeadings } from './groups.js';
 
 import { queryThreads, chooseOwner, threadTitleOf, taskDateMeta, classifyWorkspace, collectUnmatched, summarizeThreadsByCwd } from './reverse-sync.js';
 import { summarize, summarizeThread } from './delegate.js';
@@ -278,6 +279,18 @@ export async function appendDelegation(plugin, node, parentLineNo, delegate) {
   return { ok: true, lineNo: at };
 }
 
+// 确保项目文件的三个 ### 分组标题齐全（缺失的追加到末尾），落盘。
+// 返回 true 表示文件有变更。已有任务块一律不动（老任务留在未分组区）。
+async function ensureGroupHeadingsInFile(plugin, filePath) {
+  const file = plugin.app.vault.getAbstractFileByPath(filePath);
+  if (!(file instanceof TFile)) return false;
+  const { head, lines } = splitFile(await plugin.app.vault.read(file));
+  const { lines: next, added } = ensureGroupHeadings(lines);
+  if (!added.length) return false;
+  await plugin.app.vault.modify(file, joinFile(head, next));
+  return true;
+}
+
 export async function updateDelegation(plugin, filePath, threadId, patch) {
   const file = plugin.app.vault.getAbstractFileByPath(filePath);
   if (!(file instanceof TFile)) return { ok: false };
@@ -295,6 +308,30 @@ export async function updateDelegation(plugin, filePath, threadId, patch) {
     return { ok: true, lineNo: i };
   }
   return { ok: false, reason: 'not_found' };
+}
+
+// 状态跨组时把整块（父任务 + 委派子行 + 总结描述行）搬到目标分组末尾。
+// 仅项目文件（task-*.md）内的行参与搬组（日记兜底行无 ### 分组概念）；未知状态不搬。
+// guid 按父任务行号构造：委派行 lineNo 的上方最近一个非子行/描述行即父任务（rebuildDelegationMap 已记 parentLine）。
+async function moveDelegationToGroup(plugin, loc, state) {
+  const target = groupOfState(state);
+  if (!target) return { ok: false, reason: 'no_group' };
+  if (!/task-[^/]*\.md$/.test(String(loc.filePath || ''))) return { ok: false, reason: 'not_project' };
+  if (!loc.parentLine) return { ok: false, reason: 'no_parent' };
+  const file = plugin.app.vault.getAbstractFileByPath(loc.filePath);
+  if (!(file instanceof TFile)) return { ok: false, reason: 'no_file' };
+  const lines = splitFile(await plugin.app.vault.read(file)).lines;
+  const at = lines.findIndex((l) => { const p = parseDelegationLine(l); return p && p.threadId === loc.threadId; });
+  if (at < 0) return { ok: false, reason: 'not_found' };
+  let current = '';
+  for (const h of collectGroupHeadings(lines)) {
+    if (h.lineNo < at) current = h.title; else break;
+  }
+  if (current === target) return { ok: false, reason: 'same_group' };
+  await ensureGroupHeadingsInFile(plugin, loc.filePath);
+  const key = 'cl:' + loc.filePath.replace(/\.md$/i, '');
+  const guid = `${key}#${loc.parentLine}`;
+  return unwrap(await API.moveChecklistTask(key, guid, target));
 }
 
 // 扫描所有项目文件 + 日记，建立 threadId → 位置 的映射（md 是真相源）
@@ -408,6 +445,9 @@ export async function syncOnce(plugin) {
         if (t.state && t.state !== loc.state) {
           const r = await updateDelegation(plugin, loc.filePath, t.threadId, { state: t.state });
           if (r.ok) updated += 1;
+          // 状态跨组（如 running→completed）：整块搬到目标分组末尾。
+          // 仅项目文件内的行搬组（日记兜底行无分组概念）；搬动失败不阻塞状态更新。
+          await moveDelegationToGroup(plugin, loc, t.state);
         }
         // LLM 总结配置齐全时，按「静默 + #count 计数变化」双门槛重新总结已绑定会话
         if (s.summaryLlmBaseUrl && s.summaryLlmApiKey && s.summaryLlmModel) {
@@ -434,10 +474,14 @@ export async function syncOnce(plugin) {
     if (cls.type === 'ignored') continue;
     let filePath;
     let dirPath;
+    let groupTitle = '';
     if (cls.type === 'project') {
       await ensureProjectFile(plugin, cls.node);
       filePath = cls.node.filePath;
       dirPath = cls.node.dirPath;
+      // 分组写入：先补齐 ### 标题（createChecklistTask 对缺失分组返回 404），按状态入组
+      await ensureGroupHeadingsInFile(plugin, filePath);
+      groupTitle = groupOfState(t.state);
     } else {
       // 未知工作区：弹窗提醒（每个 cwd 只提一次，见 collectUnmatched），本轮仍写当天日记兜底
       if (s.unmatchedPrompt !== false && t.cwd) unmatched.set(t.cwd, (unmatched.get(t.cwd) || 0) + 1);
@@ -447,7 +491,7 @@ export async function syncOnce(plugin) {
     }
     const key = 'cl:' + filePath.replace(/\.md$/i, '');
     const meta = taskDateMeta(t);
-    const r = unwrap(await API.createChecklistTask(key, '', { summary: `${meta.timePrefix}${threadTitleOf(t)}${meta.dateSuffix}` }));
+    const r = unwrap(await API.createChecklistTask(key, groupTitle, { summary: `${meta.timePrefix}${threadTitleOf(t)}${meta.dateSuffix}` }));
     if (!r || !r.ok) continue;
     await appendDelegation(plugin, { filePath, dirPath }, r.task.lineNo, {
       state: t.state || 'running',
@@ -508,17 +552,23 @@ export async function ignoreThread(plugin, threadId) {
 
 // 全量扫描 T3 库（不限 24 小时窗口），把属于该项目 cwd 的、尚未绑定在任何文件里的
 // 会话导入为「任务 + 委派子行」。返回 { imported, skipped }。
-export async function importThreadsToProject(plugin, node) {
+// opts.llm 为真时逐会话调 LLM 总结（配置缺失或调用失败回落截断摘要）。
+export async function importThreadsToProject(plugin, node, opts = {}) {
   if (!node || !node.dirPath) return { imported: 0, skipped: 0, reason: 'no_node' };
   await ensureProjectFile(plugin, node);
   const s = projectSettings(plugin);
   const maxChars = Number(s.summaryMaxChars) || 200;
+  const useLlm = !!opts.llm && !!(s.summaryLlmBaseUrl && s.summaryLlmApiKey && s.summaryLlmModel);
   // 全量：syncSince=0 且窗口开到库最早（buildScanSql 只按 created_at >= floor 过滤）
   const threads = await queryThreads(t3DbPath(), 0).catch(() => []);
   const map = await rebuildDelegationMap(plugin);
   const ignoredWs = (plugin.settings && plugin.settings.projectIgnoredWorkspaces) || [];
   const targetCwd = normalizeCwd(node.cwd || '');
   if (!targetCwd) return { imported: 0, skipped: 0, reason: 'no_cwd' };
+
+  // 分组写入：先补齐 ### 标题（createChecklistTask 对缺失分组返回 404）
+  await ensureGroupHeadingsInFile(plugin, node.filePath);
+  const key = listKeyOf(node.filePath);
 
   let imported = 0;
   let skipped = 0;
@@ -533,15 +583,30 @@ export async function importThreadsToProject(plugin, node) {
       const n = String(ig || '').trim().replace(/\/+$/, '');
       if (n && (c === n || c.startsWith(n + '/'))) { skipped += 1; continue; }
     }
-    const key = listKeyOf(node.filePath);
     const meta = taskDateMeta(t);
-    const r = unwrap(await API.createChecklistTask(key, '', { summary: `${meta.timePrefix}${threadTitleOf(t)}${meta.dateSuffix}` }));
+    const r = unwrap(await API.createChecklistTask(key, groupOfState(t.state || 'completed'), { summary: `${meta.timePrefix}${threadTitleOf(t)}${meta.dateSuffix}` }));
     if (!r || !r.ok) { skipped += 1; continue; }
-    await appendDelegation(plugin, node, r.task.lineNo, {
+    let delegate = {
       state: t.state || 'completed',
       summary: summaryOfThread(t, maxChars),
       threadId: t.threadId
-    });
+    };
+    // LLM 总结：成功则带 #count 记录（标题+分点整块渲染），失败保持截断摘要
+    if (useLlm) {
+      try {
+        const sum = await summarizeThread(plugin, { threadId: t.threadId, dbPath: t3DbPath(), settings: s });
+        if (sum) {
+          delegate = {
+            state: delegate.state,
+            threadId: t.threadId,
+            summarizedPromptCount: sum.promptCount,
+            title: sum.title,
+            points: sum.points
+          };
+        }
+      } catch { /* 回落截断摘要 */ }
+    }
+    await appendDelegation(plugin, node, r.task.lineNo, delegate);
     imported += 1;
   }
   return { imported, skipped };
@@ -675,9 +740,9 @@ export async function fullSyncSummary(plugin) {
 }
 
 // 按节点导入 + 搬回的合并入口（手动同步与弹窗创建共用）；node 缺 cwd 时报错
-export async function importAndMoveForNode(plugin, node) {
+export async function importAndMoveForNode(plugin, node, opts = {}) {
   if (!node || !normalizeCwd(node.cwd || '')) return { ok: false, reason: 'no_cwd' };
-  const imp = await importThreadsToProject(plugin, node);
+  const imp = await importThreadsToProject(plugin, node, opts);
   const mv = await moveDelegationsToProject(plugin, node);
   return { ok: true, imported: imp.imported, moved: mv.moved };
 }
@@ -715,7 +780,7 @@ export async function createProjectWithCwd(plugin, name, cwd, opts = {}) {
   let imported = 0;
   let moved = 0;
   if (opts.importHistory) {
-    const imp = await importThreadsToProject(plugin, node);
+    const imp = await importThreadsToProject(plugin, node, { llm: !!opts.llm });
     imported = imp.imported;
     const mv = await moveDelegationsToProject(plugin, node);
     moved = mv.moved;

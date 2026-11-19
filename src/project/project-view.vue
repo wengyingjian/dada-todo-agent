@@ -38,6 +38,7 @@
         v-if="activeNode"
         :tasks="tasks"
         :dels-by-line="delsByLine"
+        :lines="activeLines"
         @toggle="onToggle"
         @edit="onEdit"
         @delegate="openDelegate"
@@ -120,6 +121,7 @@ export default {
       activeDir: '',
       tasks: [],
       delsByLine: {},
+      activeLines: [],
       threads: [],
       draft: '',
       openSet: new Set(),
@@ -189,8 +191,10 @@ export default {
     },
     async refreshActive() {
       const node = this.activeNode;
-      if (!node) { this.tasks = []; this.delsByLine = {}; return; }
+      if (!node) { this.tasks = []; this.delsByLine = {}; this.activeLines = []; return; }
       this.tasks = await rt.loadProjectTasks(this.plugin, node);
+      // 原始行留给视图定位 ### 分组标题
+      this.activeLines = await rt.readProjectLines(this.plugin, node);
       const map = await rt.loadDelegations(this.plugin, node);
       const obj = {};
       for (const [line, arr] of map.entries()) obj[line] = arr;
@@ -428,6 +432,7 @@ export default {
   background: var(--background-primary);
 }
 .pa-tasks { flex: 1; overflow: auto; min-height: 0; }
+.pa-group-h { font-size: 11px; font-weight: 600; color: var(--text-muted); padding: 10px 0 4px; letter-spacing: 0.05em; }
 .pa-task { padding: 4px 0; border-bottom: 1px solid var(--background-modifier-border); }
 .pa-task-line { display: flex; align-items: center; gap: 6px; }
 .pa-task.done .pa-task-title { text-decoration: line-through; color: var(--text-muted); }

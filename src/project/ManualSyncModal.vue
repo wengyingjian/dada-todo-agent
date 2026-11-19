@@ -24,6 +24,9 @@
         <input v-model="names[g.cwd]" placeholder="项目名称" />
         <button class="pa-btn primary" @click="create(g)">创建项目</button>
       </div>
+      <div class="da-unmatched-row da-unmatched-sub" v-if="!g.ignored && (!g.projectDir || g.unbound)">
+        <label class="da-ms-llm"><input type="checkbox" v-model="useLlm" /> 用 LLM 总结导入的会话（较慢）</label>
+      </div>
       <div class="da-unmatched-row da-unmatched-sub" v-if="!g.ignored && !g.projectDir">
         <button class="pa-btn" @click="journal(g)">放入日记</button>
         <button class="pa-btn" @click="ignore(g)">忽略工作区</button>
@@ -64,7 +67,8 @@ export default {
       items: this.groups ? this.groups.slice() : [],
       loaded: !!this.groups,
       totalThreads: this.total || 0,
-      names: {}, errors: {}
+      names: {}, errors: {},
+      useLlm: false
     };
   },
   async mounted() {
@@ -93,7 +97,7 @@ export default {
       const name = String(this.names[g.cwd] || '').trim();
       if (!name) { this.errors[g.cwd] = '请填写项目名称'; return; }
       try {
-        const r = this.onCreate ? await this.onCreate({ name, cwd: g.cwd, importHistory: true }) : null;
+        const r = this.onCreate ? await this.onCreate({ name, cwd: g.cwd, importHistory: true, llm: this.useLlm }) : null;
         if (!r || r.ok === false) { this.errors[g.cwd] = '创建失败：' + ((r && r.reason) || 'unknown'); return; }
         new Notice(`已创建项目「${name}」并导入 ${r.imported || 0} 条、搬回 ${r.moved || 0} 条`);
         await this.reload();
@@ -115,7 +119,7 @@ export default {
     },
     async importTo(g) {
       try {
-        const r = this.onImport ? await this.onImport({ cwd: g.cwd }) : null;
+        const r = this.onImport ? await this.onImport({ cwd: g.cwd, llm: this.useLlm }) : null;
         if (!r || r.ok === false) { this.errors[g.cwd] = '导入失败：' + ((r && r.reason) || 'unknown'); return; }
         new Notice(`已导入 ${r.imported || 0} 条、搬回 ${r.moved || 0} 条`);
         await this.reload();
@@ -142,4 +146,5 @@ export default {
 .da-manual-sync .da-ms-badge.warn { color: var(--text-warning, #b98a00); }
 .da-manual-sync .da-ms-badge.ok { color: var(--text-success, #4a8b3a); }
 .da-manual-sync .da-ms-badge.muted { opacity: 0.6; }
+.da-manual-sync .da-ms-llm { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; opacity: 0.85; cursor: pointer; }
 </style>
