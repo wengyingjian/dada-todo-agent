@@ -73,6 +73,8 @@ export default defineConfig({
     rollupOptions: {
       external: [
         'obsidian', 'electron', '@electron/remote',
+        // CM6 由 Obsidian 宿主提供，插件自带副本会导致编辑器创建失败（"打开失败"）
+        '@codemirror/state', '@codemirror/view', '@codemirror/commands', '@codemirror/language', '@codemirror/search',
         'child_process', 'fs', 'os', 'path', 'node:child_process', 'node:fs', 'node:os', 'node:path'
       ],
       output: {
