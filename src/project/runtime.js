@@ -8,7 +8,7 @@ import {
   buildProjectIndex, normalizeRoot, projectFilePath, normalizeCwd, matchProjectByCwd
 } from './index.js';
 import { isArchiveFile, pickArchiveFile } from './archive.js';
-import { extractDelegations, formatDelegationLine, parseDelegationLine, T3_MARK } from './delegate-line.js';
+import { extractDelegations, formatDelegationLine, parseDelegationLine, planDelegationInsert, T3_MARK } from './delegate-line.js';
 import { queryThreads, chooseOwner, threadTitleOf } from './reverse-sync.js';
 import { summarize, summarizeThread } from './delegate.js';
 import { shouldResummarize } from './summarize-llm.js';
@@ -268,12 +268,13 @@ export async function appendDelegation(plugin, node, parentLineNo, delegate) {
   const file = plugin.app.vault.getAbstractFileByPath(node.filePath);
   if (!(file instanceof TFile)) return { ok: false };
   const { head, lines } = splitFile(await plugin.app.vault.read(file));
-  let insertAt = parentLineNo + 1;
-  while (insertAt < lines.length && /^\s*$/.test(lines[insertAt])) insertAt++;
+  // 子行紧贴任务行；任务行与后续内容之间的空行删除（否则层级断开，
+  // 典型如 createChecklistTask 建父任务后 body 尾部的 \n 空串）
+  const { at, removeEmpty } = planDelegationInsert(lines, parentLineNo);
   const line = formatDelegationLine(delegate);
-  lines.splice(insertAt, 0, line);
+  lines.splice(at, removeEmpty, line);
   await plugin.app.vault.modify(file, joinFile(head, lines));
-  return { ok: true, lineNo: insertAt };
+  return { ok: true, lineNo: at };
 }
 
 export async function updateDelegation(plugin, filePath, threadId, patch) {

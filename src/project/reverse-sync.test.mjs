@@ -46,3 +46,10 @@ test('归属：cwd 命中项目否则日记', () => {
   assert.equal(chooseOwner('/repos/other', idx.nodes).node.name, '工作');
   assert.equal(chooseOwner('/tmp/x', idx.nodes), null);
 });
+
+test('mapThreadRow: 任一 run running 时状态覆盖为 running（agent-deck 口径回归）', () => {
+  const r = mapThreadRow({ thread_id: 't1', run_status: 'completed', running_runs: 2, pending_kinds: '' });
+  assert.equal(r.state, 'running');
+  const r2 = mapThreadRow({ thread_id: 't2', run_status: 'completed', running_runs: 0, pending_kinds: '' });
+  assert.equal(r2.state, 'completed');
+});

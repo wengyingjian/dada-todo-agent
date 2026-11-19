@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  formatDelegationLine, parseDelegationLine, stateFromRun, extractDelegations, shortId, renderSummaryBlock, countSummaryDescLines
+  formatDelegationLine, parseDelegationLine, stateFromRun, extractDelegations, shortId, renderSummaryBlock, countSummaryDescLines, planDelegationInsert
 } from './delegate-line.js';
 
 const ID = '3f2a9b1c-4d5e-6f70-8192-a3b4c5d6e7f8';
@@ -119,4 +119,23 @@ test('解析子行时剥掉分点描述行,返回其行数以便调用方替换�
   assert.equal(consumed, 2);
   assert.equal(countSummaryDescLines(['\t- [ ] 另一个任务'], 0), 0);
   assert.equal(countSummaryDescLines(['普通正文行'], 0), 0);
+});
+
+// ---------- bugfix 回归: 任务行与子行之间不得夹空行 ----------
+
+test('delegationInsertAt: 任务行后紧跟尾部空串时,子行应紧贴任务行且删掉途中的空行', () => {
+  // 真实场景: createChecklistTask 建父任务后, body 以 \n 结尾 → 尾部空串
+  const lines = ['前文', '- [ ] 任务X', '- [ ] 做个游戏', ''];
+  const r = planDelegationInsert(lines, 2);
+  // 期望: 插在 3(紧贴任务行),并删除 3 位置的空串
+  assert.deepEqual(r, { at: 3, removeEmpty: 1 });
+});
+test('delegationInsertAt: 任务行后有多个空行时全部跳过并计数', () => {
+  const lines = ['- [ ] 任务', '', '', '后续'];
+  const r = planDelegationInsert(lines, 0);
+  assert.deepEqual(r, { at: 1, removeEmpty: 2 });
+});
+test('delegationInsertAt: 任务行后紧跟其他内容(无空行)时不动', () => {
+  const lines = ['- [ ] 任务', '	- [x] 已有子行'];
+  assert.deepEqual(planDelegationInsert(lines, 0), { at: 1, removeEmpty: 0 });
 });

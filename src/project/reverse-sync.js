@@ -12,8 +12,11 @@ export function buildScanSql(floorIso) {
   return `
 SELECT t.thread_id, t.title, t.created_at, t.updated_at,
        coalesce(p.workspace_root,'') AS cwd,
+       -- 与 agent-deck 同口径：任一 run 在跑则 running，否则取 ordinal 最新一条
        (SELECT r.status FROM orchestration_v2_projection_runs r
          WHERE r.thread_id = t.thread_id ORDER BY r.ordinal DESC LIMIT 1) AS run_status,
+       (SELECT count(*) FROM orchestration_v2_projection_runs r
+         WHERE r.thread_id = t.thread_id AND r.status = 'running') AS running_runs,
        (SELECT group_concat(DISTINCT q.kind) FROM orchestration_v2_projection_runtime_requests q
          WHERE q.thread_id = t.thread_id AND q.status = 'pending') AS pending_kinds,
        (SELECT m.payload_json FROM orchestration_v2_projection_messages m
@@ -42,7 +45,9 @@ function textOf(json) {
 
 export function mapThreadRow(row) {
   const pendingKinds = String(row.pending_kinds || '').split(',').map((s) => s.trim()).filter(Boolean);
-  const runStatus = String(row.run_status || '');
+  let runStatus = String(row.run_status || '');
+  // 任一 run 在跑（含排队重跑）则覆盖为 running，对齐 agent-deck 的 threadStateFromRuns
+  if (Number(row.running_runs) > 0) runStatus = 'running';
   return {
     threadId: String(row.thread_id || ''),
     title: String(row.title || ''),

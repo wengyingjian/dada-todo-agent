@@ -87,6 +87,22 @@ export function countSummaryDescLines(lines, start) {
   return n;
 }
 
+// ---------- 委派子行插入位置规划 ----------
+// 任务行与子行之间不允许夹空行（空行会断开层级，视觉上像隔了一条）。
+// 子行直接插在任务行的下一行；任务行与后续内容之间的空行删掉。
+// 返回 { at, removeEmpty }：at = 插入下标，removeEmpty = 插入后需删除的空行数
+// （典型场景：createChecklistTask 建父任务后 body 以 \n 结尾，尾部空串留在新任务后）。
+export function planDelegationInsert(lines, parentLineNo) {
+  const at = parentLineNo + 1;
+  let removeEmpty = 0;
+  let i = at;
+  while (i < (lines || []).length && /^\s*$/.test(String(lines[i] || ''))) {
+    i += 1;
+    removeEmpty += 1;
+  }
+  return { at, removeEmpty };
+}
+
 // T3 状态口径（见 spec §8.3）
 export function stateFromRun(runStatus, pendingKinds = []) {
   const pending = (pendingKinds || []).filter((k) => k && k !== 'auth_refresh');
