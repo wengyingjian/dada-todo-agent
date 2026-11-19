@@ -398,9 +398,10 @@
     "t3ModelDesc": "委派时使用的模型 id。留空用项目的默认模型；新建的 T3 项目没有默认模型时需要填。",
     "tabTodo": "待办清单",
     "tabAgent": "Agent 委派",
+    "tabAbout": "关于",
     "summaryPromptTemplate": "总结 system prompt 模板",
-    "summaryPromptTemplateDesc": "留空使用内置默认。支持占位符 {{delegation}}（委派任务描述）与 {{transcript}}（完整会话记录）：模板含 {{transcript}} 时整段接管 user 消息，否则只替换 system 段。",
-    "summaryPromptTemplatePlaceholder": "留空使用内置默认。示例：你是项目周报助手…\n标题: …\n1. …\n会话记录：{{transcript}}"
+    "summaryPromptTemplateDesc": "已预填内置默认，实际生效的就是框里这段。改成什么就用什么；清空则回到内置默认。支持占位符 {{delegation}}（委派任务描述）与 {{transcript}}（完整会话记录）：模板含 {{transcript}} 时整段接管 user 消息，否则只替换 system 段。",
+    "summaryPromptTemplatePlaceholder": "清空则回到内置默认。示例：你是项目周报助手…\n标题: …\n1. …\n会话记录：{{transcript}}"
   },
   "modals": {
     "linkAdd": "新增链接",

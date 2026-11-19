@@ -6,6 +6,7 @@ import { setColorScheme, setWeekStart, tagColorOf, usedTagColors, EXTRA_SCHEME_O
 import { VIEW_MENU_ITEMS, DEFAULT_MENU_VIEWS, reorderViews } from '../composables/viewMenu.js';
 import { fullSyncSummary, importAndMoveForNode, scanProjects, ignoreWorkspace, keepJournalWorkspace, createProjectWithCwd, resetWorkspace } from '../../project/runtime.js';
 import ManualSyncModal from '../../project/ManualSyncModal.vue';
+import { DEFAULT_SUMMARY_SYSTEM } from '../../project/summarize-llm.js';
 import { VueModal } from './VueModal.js';
 
 // 自检新版：比对 GitHub 仓库 main 分支 manifest 的 version 与本地版本
@@ -96,30 +97,41 @@ export class DadaTodoSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
-    // 设置页双 Tab（对齐 Agent Deck 视觉）：'todo' 待办清单 / 'agent' Agent 委派
+    // 设置页三 Tab（对齐 Agent Deck 视觉）：'todo' 待办清单 / 'agent' Agent 委派 / 'about' 关于
     this.tab = 'todo';
   }
 
   // Tab 导航行：plainBlock 渲染一排 tab 按钮。
   // 声明式 API 下宿主会缓存 defs（this.display() 不触发重渲），所以 tab 切换不走
   // defs 过滤，而是直接对 DOM 生效：按组标题给 .setting-group 打 data-dada-tab，
-  // 点击时显示/隐藏对应组（关于组恒显示）。
+  // 点击时显示/隐藏对应组。按 i18n key 反查标题，换语言不失效。
   static TAB_GROUP_KEYS = {
-    todo: ['面板与外观', '日记设置', '收件箱与清单', '视图与日程', '提醒', '任务标记', '标签设置'],
-    agent: ['项目与委派']
+    todo: ['groupAppearance', 'groupJournal', 'groupInbox', 'groupViews', 'groupReminder', 'groupTaskMark', 'groupTagColors'],
+    agent: ['groupProject'],
+    about: ['groupAbout']
   };
+
+  // i18n key → 当前语言下的组标题（与 group() 生成 heading 的口径一致：t('settings.' + key)）
+  static tabTitles() {
+    const out = {};
+    for (const [id, keys] of Object.entries(DadaTodoSettingTab.TAB_GROUP_KEYS)) {
+      out[id] = keys.map((k) => t('settings.' + k));
+    }
+    return out;
+  }
 
   applyTabVisibility(root) {
     if (!root) return;
+    const titles = DadaTodoSettingTab.tabTitles();
     const groups = root.querySelectorAll('.setting-group');
     for (const g of groups) {
       const head = g.querySelector('.setting-item-name');
       const title = head ? head.textContent.trim() : '';
       let tab = null;
-      for (const [id, keys] of Object.entries(DadaTodoSettingTab.TAB_GROUP_KEYS)) {
-        if (keys.includes(title)) { tab = id; break; }
+      for (const [id, list] of Object.entries(titles)) {
+        if (list.includes(title)) { tab = id; break; }
       }
-      if (!tab) continue; // 导航行 / 关于组：恒显示
+      if (!tab) continue; // 未归组的自定义组：恒显示
       g.dataset.dadaTab = tab;
       g.style.display = (tab === this.tab) ? '' : 'none';
     }
@@ -135,7 +147,8 @@ export class DadaTodoSettingTab extends PluginSettingTab {
         el.addClass('dt-set-tabs');
         const TABS = [
           ['todo', 'settings.tabTodo'],
-          ['agent', 'settings.tabAgent']
+          ['agent', 'settings.tabAgent'],
+          ['about', 'settings.tabAbout']
         ];
         // 首次渲染：宿主把 defs 装进 DOM 后才有 .setting-group，用 rAF 等一帧再打标
         requestAnimationFrame(() => {
@@ -852,12 +865,12 @@ export class DadaTodoSettingTab extends PluginSettingTab {
               open: true,
               groups,
               total,
-              onCreate: async ({ name, cwd, importHistory }) => (
-                createProjectWithCwd(plugin, name, cwd, { importHistory: importHistory !== false })
+              onCreate: async ({ name, cwd, importHistory, llm }) => (
+                createProjectWithCwd(plugin, name, cwd, { importHistory: importHistory !== false, llm: !!llm })
               ),
               onIgnore: async ({ cwd }) => { await ignoreWorkspace(plugin, cwd); },
               onJournal: async ({ cwd }) => { await keepJournalWorkspace(plugin, cwd); },
-              onImport: async ({ cwd }) => importAndMoveForNode(plugin, nodeByCwd(cwd)),
+              onImport: async ({ cwd, llm }) => importAndMoveForNode(plugin, nodeByCwd(cwd), { llm: !!llm }),
               onReset: async ({ cwd }) => { await resetWorkspace(plugin, cwd); },
               onRefresh: async () => {
                 const gs = await fullSyncSummary(plugin);
@@ -935,12 +948,16 @@ export class DadaTodoSettingTab extends PluginSettingTab {
       }),
       row('summaryPromptTemplate', 'summaryPromptTemplateDesc', (s) => {
         s.addTextArea((tx) => {
-          tx.inputEl.rows = 6;
+          tx.inputEl.rows = 8;
           tx.inputEl.style.width = '100%';
           tx.setPlaceholder(T('summaryPromptTemplatePlaceholder'));
-          tx.setValue(String(plugin.settings.project.summaryPromptTemplate || ''));
+          // 预填内置默认：没自定义时把默认文本显示出来，用户直观看到实际生效的内容
+          tx.setValue(String(plugin.settings.project.summaryPromptTemplate || DEFAULT_SUMMARY_SYSTEM));
           tx.onChange(async (value) => {
-            plugin.settings.project.summaryPromptTemplate = String(value || '');
+            const raw = String(value == null ? '' : value);
+            const trimmed = raw.trim();
+            // 空 / 与内置默认一致 → 存空串，继续跟随内置默认；否则按用户原文保存
+            plugin.settings.project.summaryPromptTemplate = (!trimmed || trimmed === DEFAULT_SUMMARY_SYSTEM.trim()) ? '' : raw;
             await plugin.saveSettings();
           });
         });
