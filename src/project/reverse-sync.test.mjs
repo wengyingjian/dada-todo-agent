@@ -1,7 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildScanSql, mapThreadRow, chooseOwner, threadTitleOf, classifyWorkspace, collectUnmatched } from './reverse-sync.js';
+import { buildScanSql, mapThreadRow, chooseOwner, threadTitleOf, classifyWorkspace, collectUnmatched, summarizeThreadsByCwd } from './reverse-sync.js';
 import { buildProjectIndex } from './index.js';
+
+// summarizeThreadsByCwd：全量分组 + 最长前缀归属 + 忽略标注
+test('全量会话按 cwd 汇总：无 cwd 归一组，归属取最长前缀', () => {
+  const threads = [
+    { threadId: 'a', cwd: '/repos/a', title: 'x' },
+    { threadId: 'b', cwd: '/repos/a/sub', title: 'y' },
+    { threadId: 'c', cwd: '/repos', title: 'z' },
+    { threadId: 'd', cwd: '', title: 'w' },
+    { threadId: 'e', cwd: '/tmp/scratch', title: 'v' }
+  ];
+  const nodes = [
+    { dirPath: '任务/A', cwd: '/repos/a' },
+    { dirPath: '任务/根', cwd: '/repos' }
+  ];
+  const groups = summarizeThreadsByCwd(threads, nodes, ['/tmp/scratch']);
+  const byCwd = Object.fromEntries(groups.map((g) => [g.cwd, g]));
+  // 分组按原始 cwd 精确归组（子目录单独成组），归属才做最长前缀
+  assert.equal(byCwd['/repos/a'].total, 1);
+  assert.equal(byCwd['/repos/a/sub'].total, 1);
+  assert.equal(byCwd['/repos/a'].projectDir, '任务/A');
+  assert.equal(byCwd['/repos/a/sub'].projectDir, '任务/A'); // 子目录归属父项目
+  assert.equal(byCwd['/repos'].projectDir, '任务/根');
+  assert.equal(byCwd['(无 cwd)'].total, 1);
+  assert.equal(byCwd['/tmp/scratch'].ignored, true);
+});
 
 test('扫描 SQL 覆盖所需表并排除内部线程', () => {
   const sql = buildScanSql('2026-11-18T00:00:00.000Z');

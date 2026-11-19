@@ -146,7 +146,9 @@ export function summarizeThreadsByCwd(threads, nodes, ignored) {
 // 只读查询：返回线程数组；任何失败都返回空数组（调用方记日志，不弹窗）
 export async function queryThreads(dbPath, sinceMs, { execFile } = {}) {
   const run = execFile || nodeExecFile;
-  const floor = new Date(sinceMs || Date.now() - 24 * 3600 * 1000).toISOString();
+  // sinceMs 为 null/undefined 才回落 24h 窗口；0 = 全量（不能写成 sinceMs ||，falsy-0 会吞掉全量语义）
+  const effectiveSince = sinceMs == null ? Date.now() - 24 * 3600 * 1000 : sinceMs;
+  const floor = new Date(effectiveSince).toISOString();
   return new Promise((resolve) => {
     run('sqlite3', ['-readonly', '-json', dbPath, buildScanSql(floor)], { maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
       if (err) return resolve([]);
