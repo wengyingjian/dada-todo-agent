@@ -97,36 +97,54 @@ export async function startDelegation(plugin, rt, opts) {
   });
   const lineNo = debut.lineNo;
 
+  // 定位本委派的子行：只在「本委派自己的占位行（创建时的 lineNo）」或「已带该 threadId
+  // 的行」上写。不再全文件找任意「进行中…」占位——并发委派时那会把别的会话回填到自己头上。
+  const locateOwnLine = (lines, threadId) => {
+    if (threadId) {
+      const at = lines.findIndex((l) => {
+        const d = parseDelegationLine(l);
+        return d && d.threadId === threadId;
+      });
+      if (at >= 0) return at;
+    }
+    if (lines[lineNo] != null && /进行中|等你回答/.test(lines[lineNo])) {
+      const d = parseDelegationLine(lines[lineNo]);
+      // 占位行还没被其他会话回填（无 threadId 或空）才可认领
+      if (!d || !d.threadId) return lineNo;
+    }
+    return -1;
+  };
+
   const finishLine = async (threadId, state, summary) => {
     const f = plugin.app.vault.getAbstractFileByPath(node.filePath);
     if (!f) return;
     const { head, lines } = (rt.splitFile ? rt.splitFile(await plugin.app.vault.read(f)) : { head: '', lines: String(await plugin.app.vault.read(f)).split('\n') });
     const target = formatDelegationLine({ state, summary, threadId });
-    if (lines[lineNo] != null && /进行中|等你回答/.test(lines[lineNo])) {
-      lines[lineNo] = target;
-    } else {
-      // 行号漂移：找同一 threadId 或占位行
-      const idx = lines.findIndex((l) => {
-        const d = parseDelegationLine(l);
-        return d && d.threadId === threadId;
-      });
-      const placeholder = lines.findIndex((l) => /进行中…\s*$/.test(l));
-      const at = idx >= 0 ? idx : placeholder;
-      if (at < 0) return;
-      lines[at] = target;
-    }
+    const at = locateOwnLine(lines, threadId);
+    if (at < 0) return;
+    lines[at] = target;
     await plugin.app.vault.modify(f, rt.joinFile ? rt.joinFile(head, lines) : lines.join('\n'));
   };
 
-  // 1.5s 后尝试从数据库回填 threadId（CLI 结束时才输出，长会话期间靠扫描回填）
+  // 1.5s 后尝试从数据库回填 threadId（CLI 结束时才输出，长会话期间靠扫描回填）。
+  // 归属判定：最近 2 分钟内、同 cwd、且数据库 title 与委派 prompt 同源的会话才回填；
+  // 无法唯一确定时不回填（子行保留占位，反向同步稍后按 cwd 兜底归属）。
   const backfill = setInterval(async () => {
     try {
       const map = await rt.rebuildDelegationMap(plugin);
       const recent = await rt.recentThreads(plugin, { minutes: 2 });
-      const hit = recent.find((t) => !map.has(t.threadId) && t.cwd === cwd);
-      if (hit) {
-        await finishLine(hit.threadId, 'running', summarize(prompt, maxChars) || '进行中…');
+      const candidates = recent.filter((t) => !map.has(t.threadId) && t.cwd === cwd);
+      if (candidates.length === 1) {
+        await finishLine(candidates[0].threadId, 'running', summarize(prompt, maxChars) || '进行中…');
         clearInterval(backfill);
+      } else if (candidates.length > 1) {
+        // 多个候选：按首条用户消息与委派 prompt 的前缀匹配锁定
+        const norm = (s) => String(s || '').replace(/\s+/g, '').slice(0, 40);
+        const hit = candidates.find((t) => norm(t.firstUser) === norm(prompt) || norm(prompt).startsWith(norm(t.firstUser)));
+        if (hit) {
+          await finishLine(hit.threadId, 'running', summarize(prompt, maxChars) || '进行中…');
+          clearInterval(backfill);
+        }
       }
     } catch { /* ignore */ }
   }, 1500);
@@ -173,9 +191,8 @@ async function finishWithSummary(plugin, rt, node, lineNo, threadId, state, { pr
   const f = plugin.app.vault.getAbstractFileByPath(node.filePath);
   if (!f) return;
   const { head, lines } = rt.splitFile(await plugin.app.vault.read(f));
-  const at = (lineNo != null && parseDelegationLine(lines[lineNo]))
-    ? lineNo
-    : lines.findIndex((l) => { const d = parseDelegationLine(l); return d && d.threadId === threadId; });
+  // 行号漂移安全定位（与 finishLine 同规则：threadId 优先，占位行需未回填才可认领）
+  const at = locateOwnLine(lines, threadId);
   if (at < 0) return;
   const payload = summary
     ? { state, threadId, summarizedPromptCount: summary.promptCount, title: summary.title, points: summary.points }
@@ -186,6 +203,17 @@ async function finishWithSummary(plugin, rt, node, lineNo, threadId, state, { pr
     lines[at] = formatDelegationLine({ state, summary: fallback, threadId });
   }
   await plugin.app.vault.modify(f, rt.joinFile(head, lines));
+}
+
+// Electron 主进程网络栈通路：渲染进程 fetch 走 Chromium 栈，对系统代理/内网证书站点
+// 会 Failed to fetch；主进程 net.fetch 用系统网络栈，这类站点能通。取不到返回 null。
+export function mainProcessFetch() {
+  try {
+    const { remote } = require('electron');
+    const net = remote && remote.net;
+    if (net && typeof net.fetch === 'function') return (url, init) => net.fetch(url, init);
+  } catch { /* 非 electron 环境 */ }
+  return null;
 }
 
 // 取会话消息 → 构建 prompt → 调 LLM → 解析。任何一步失败返回 null（调用方回退）。
@@ -201,7 +229,8 @@ export async function summarizeThread(plugin, { threadId, dbPath, settings, dele
       model: settings.summaryLlmModel,
       apiKey: settings.summaryLlmApiKey,
       system, user,
-      timeoutMs: (Number(settings.summaryTimeoutSeconds) || 30) * 1000
+      timeoutMs: (Number(settings.summaryTimeoutSeconds) || 30) * 1000,
+      fallbackFetchers: [mainProcessFetch()]
     });
     if (!llm) return null;
     return { ...llm, promptCount };

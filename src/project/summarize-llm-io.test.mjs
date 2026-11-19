@@ -81,3 +81,26 @@ test('callSummaryLlm：未配置（缺 baseUrl 或 key）直接返回 null', asy
   const r = await callSummaryLlm({ baseUrl: '', model: 'm', apiKey: '', system: 's', user: 'u' });
   assert.equal(r, null);
 });
+
+test('默认 fetch 挂掉时依次尝试 fallback fetchers（Obsidian 渲染进程代理站修复回归）', async () => {
+  // 模拟: 全局 fetch 对代理站抛 TypeError（系统代理拦截），Electron 主进程 net.fetch 可通
+  const brokenGlobalFetch = async () => { throw new TypeError('Failed to fetch'); };
+  const netFetch = async (url, init) => ({ ok: true, json: async () => ({ choices: [{ message: { content: '标题: 主进程通路\n1. 要点' } }] }) });
+  const r = await callSummaryLlm({
+    baseUrl: 'https://internal.example/v1', model: 'm', apiKey: 'k', system: 's', user: 'u',
+    globalFetch: brokenGlobalFetch, fallbackFetchers: [netFetch], timeoutMs: 5000
+  });
+  assert.ok(r, '全局 fetch 失败后应走 fallback');
+  assert.equal(r.title, '主进程通路');
+});
+
+test('默认 fetch 正常时不碰 fallback（不增加无谓调用）', async () => {
+  let fallbackCalled = 0;
+  const goodGlobal = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: '标题: 主通路' } }] }) });
+  const r = await callSummaryLlm({
+    baseUrl: 'https://x/v1', model: 'm', apiKey: 'k', system: 's', user: 'u',
+    globalFetch: goodGlobal, fallbackFetchers: [async () => { fallbackCalled++; return null; }], timeoutMs: 5000
+  });
+  assert.equal(r.title, '主通路');
+  assert.equal(fallbackCalled, 0);
+});

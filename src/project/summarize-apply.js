@@ -34,3 +34,20 @@ function formatHead(indent, summary) {
   const version = summary.summarizedPromptCount != null ? `#${summary.summarizedPromptCount}` : '';
   return `${indent}- [${boxChar}] ${String(summary.title || '完成').trim()}  ⚡ t3:${summary.threadId || ''}${version}`.replace(/\s+$/, '');
 }
+
+// 行号漂移安全定位：优先按 threadId 现场扫整份文件找委派行；
+// 找不到时回退到缓存行号（仍要求该行确实是委派行）。
+// 返回行下标，找不到返回 -1。
+export function locateDelegationLine(lines, threadId, cachedLineNo = -1) {
+  if (threadId) {
+    const at = (lines || []).findIndex((l) => {
+      const d = parseDelegationLine(l);
+      return d && d.threadId === threadId;
+    });
+    if (at >= 0) return at;
+  }
+  if (cachedLineNo >= 0 && lines[cachedLineNo] != null && parseDelegationLine(lines[cachedLineNo])) {
+    return cachedLineNo;
+  }
+  return -1;
+}

@@ -12,7 +12,7 @@ import { extractDelegations, formatDelegationLine, parseDelegationLine, T3_MARK 
 import { queryThreads, chooseOwner, threadTitleOf } from './reverse-sync.js';
 import { summarize, summarizeThread } from './delegate.js';
 import { shouldResummarize } from './summarize-llm.js';
-import { replaceSummaryInLines } from './summarize-apply.js';
+import { replaceSummaryInLines, locateDelegationLine } from './summarize-apply.js';
 import { DEFAULT_SETTINGS, mergeProjectSettings } from './settings.js';
 import * as API from '../core/api/tasks.js';
 
@@ -312,7 +312,11 @@ export async function rebuildDelegationMap(plugin) {
     const lines = splitFile(await plugin.app.vault.read(f)).lines;
     for (const d of extractDelegations(lines)) {
       if (!d.threadId) continue;
-      map.set(d.threadId, { filePath: f.path, lineNo: d.line, parentLine: d.parentLine, state: d.state, summary: d.summary, summarizedPromptCount: d.summarizedPromptCount });
+      const entry = { filePath: f.path, lineNo: d.line, parentLine: d.parentLine, state: d.state, summary: d.summary, summarizedPromptCount: d.summarizedPromptCount };
+      const prev = map.get(d.threadId);
+      // 同一会话出现多行（历史误回填/复制）：全部保留，map 值为数组；单行时也统一为数组形态
+      if (prev) prev.push(entry);
+      else map.set(d.threadId, [entry]);
     }
   }
   return map;
@@ -324,7 +328,8 @@ export function hasDelegationMark(line) {
 
 // ---------- T3 Code 数据库与反向同步 ----------
 
-export { t3DbPath } from './t3-paths.js';
+import { t3DbPath } from './t3-paths.js';
+export { t3DbPath };
 
 export function t3EnvironmentId() {
   try {
@@ -388,17 +393,24 @@ export async function syncOnce(plugin) {
   let updated = 0;
 
   for (const t of threads) {
-    const loc = map.get(t.threadId);
-    if (loc) {
-      if (t.state && t.state !== loc.state) {
-        const r = await updateDelegation(plugin, loc.filePath, t.threadId, { state: t.state });
-        if (r.ok) updated += 1;
+    const locs = map.get(t.threadId);
+    if (locs && locs.length) {
+      // 同一会话可能有多条委派行（历史误回填/复制），每行独立处理：
+      // 状态统一到最新；再总结只处理「#count 落后」的行，完成后该行不再命中门槛
+      let newest = locs[0];
+      for (const loc of locs) {
+        if ((loc.summarizedPromptCount || 0) > (newest.summarizedPromptCount || 0)) newest = loc;
+        if (t.state && t.state !== loc.state) {
+          const r = await updateDelegation(plugin, loc.filePath, t.threadId, { state: t.state });
+          if (r.ok) updated += 1;
+        }
+        // LLM 总结配置齐全时，按「静默 + #count 计数变化」双门槛重新总结已绑定会话
+        if (s.summaryLlmBaseUrl && s.summaryLlmApiKey && s.summaryLlmModel) {
+          const fresh = await resummarizeIfNeeded(plugin, t, loc, s);
+          if (fresh) updated += 1;
+        }
       }
-      // LLM 总结配置齐全时，按「静默 + #count 计数变化」双门槛重新总结已绑定会话
-      if (s.summaryLlmBaseUrl && s.summaryLlmApiKey && s.summaryLlmModel) {
-        const fresh = await resummarizeIfNeeded(plugin, t, loc, s);
-        if (fresh) updated += 1;
-      }
+      void newest;
       continue;
     }
     if (ignored.has(t.threadId)) continue;
@@ -448,7 +460,10 @@ export async function resummarizeIfNeeded(plugin, thread, loc, s) {
   const file = plugin.app.vault.getAbstractFileByPath(loc.filePath);
   if (!(file instanceof TFile)) return false;
   const { head, lines } = splitFile(await plugin.app.vault.read(file));
-  const r = replaceSummaryInLines(lines, loc.lineNo, {
+  // 行号漂移安全定位：按 threadId 现场扫文件，缓存行号只作回退
+  const at = locateDelegationLine(lines, thread.threadId, loc.lineNo);
+  if (at < 0) return false;
+  const r = replaceSummaryInLines(lines, at, {
     state: thread.state || loc.state,
     threadId: thread.threadId,
     summarizedPromptCount: summary.promptCount,

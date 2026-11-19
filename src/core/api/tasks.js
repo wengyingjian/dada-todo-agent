@@ -610,12 +610,20 @@ export async function createChecklistTask(listKey, groupTitle, task) {
 
   let insertAt;
   if (!groupTitle) {
+    // 无 ### 标题时插到文件末尾，但先跳过尾部空行（文件以 \n 结尾时 split 会产生
+    // 空串行，直接用 lines.length 会把新任务插到最后一个换行之后，任务行前多出空行）
     insertAt = headings.length ? headings[0].idx : doc.lines.length;
+    if (!headings.length) {
+      while (insertAt > 0 && !String(doc.lines[insertAt - 1] || '').trim()) insertAt--;
+    }
   } else {
     const h = headings.find((x) => x.title === groupTitle);
     if (!h) return res(404, { ok: false, reason: 'group_not_found' });
     const next = headings.find((x) => x.idx > h.idx);
     insertAt = next ? next.idx : doc.lines.length;
+    if (!next) {
+      while (insertAt > 0 && !String(doc.lines[insertAt - 1] || '').trim()) insertAt--;
+    }
   }
 
   const lines = doc.lines.slice();

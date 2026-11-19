@@ -4,13 +4,15 @@
 
 // ---------- 会话版本计数 ----------
 
-// 数「真实用户发言数」：role=user、有文本、非工具注入（createdBy 缺省视为 user）。
+// 数「真实用户发言数」：role=user、有文本、非工具注入。
+// createdBy 口径：'tool' 是工具注入要滤掉；'agent' 是委派入口代发（T3 把 MCP 发起记为 agent），算真实发言；
+// 缺省视为真实发言（旧数据）。
 // 作为会话版本号记在子行标记 #count 上。
 export function countUserPrompts(msgs) {
   return (msgs || []).filter((m) => {
     if (!m || m.role !== 'user') return false;
     if (!String(m.text || '').trim()) return false;
-    if (m.createdBy != null && m.createdBy !== 'user') return false;
+    if (m.createdBy === 'tool') return false;
     return true;
   }).length;
 }
@@ -18,13 +20,13 @@ export function countUserPrompts(msgs) {
 // ---------- transcript 组装 ----------
 
 // msgs: [{ role: 'user'|'assistant', text, createdBy? }]
-// 只保留文本消息；user 消息必须 createdBy === 'user'（排除工具/命令注入）。
+// 只保留文本消息；user 消息滤掉工具注入（createdBy === 'tool'；'agent' 代发算真实发言）。
 // 超预算时从头部丢弃（保留最新对话，最新消息最重要）。
 export function buildTranscript(msgs, { maxChars = 24000 } = {}) {
   const kept = (msgs || []).filter((m) => {
     if (!m || (m.role !== 'user' && m.role !== 'assistant')) return false;
     if (!String(m.text || '').trim()) return false;
-    if (m.role === 'user' && m.createdBy != null && m.createdBy !== 'user') return false;
+    if (m.role === 'user' && m.createdBy === 'tool') return false;
     return true;
   });
   const render = (m) => `${m.role === 'user' ? '用户' : '助手'}: ${String(m.text).trim()}`;

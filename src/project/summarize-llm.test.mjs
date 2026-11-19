@@ -78,3 +78,25 @@ test('shouldResummarize：completed 且静默超时且计数增加才总结', ()
   // 还在进行中：不总结
   assert.equal(shouldResummarize({ state: 'running', summarizedPromptCount: 2, currentPromptCount: 3, updatedAt: now - 31 * 60000, ...opts }), false);
 });
+
+test('复现:委派入口的 user 消息 createdBy="agent" 也算真实发言（bugfix 回归）', () => {
+  const msgs = [
+    { role: 'user', text: '做个游戏', createdBy: 'agent' },
+    { role: 'assistant', text: '写好了' }
+  ];
+  assert.equal(countUserPrompts(msgs), 1);
+  const t = buildTranscript(msgs, { maxChars: 10000 });
+  assert.match(t, /用户: 做个游戏/);
+});
+
+test('复现:工具注入(createdBy="tool")仍然过滤（bugfix 回归）', () => {
+  const msgs = [
+    { role: 'user', text: '做个游戏', createdBy: 'agent' },
+    { role: 'user', text: '[系统注入]', createdBy: 'tool' },
+    { role: 'user', text: '无 createdBy 的旧消息' }
+  ];
+  assert.equal(countUserPrompts(msgs), 2);
+  const t = buildTranscript(msgs, { maxChars: 10000 });
+  assert.doesNotMatch(t, /系统注入/);
+  assert.match(t, /无 createdBy 的旧消息/);
+});

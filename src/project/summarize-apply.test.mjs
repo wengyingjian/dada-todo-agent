@@ -1,7 +1,7 @@
 // 接线层测试：把 LLM 总结应用进任务文件行数组（纯行变换，无 vault I/O）。
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applySummaryToLines, replaceSummaryInLines } from './summarize-apply.js';
+import { applySummaryToLines, replaceSummaryInLines, locateDelegationLine } from './summarize-apply.js';
 
 const ID = '3f2a9b1c-4d5e-6f70-8192-a3b4c5d6e7f8';
 
@@ -73,4 +73,30 @@ test('replaceSummaryInLines：旧块无分点、新块有分点,正确插入不�
 test('applySummaryToLines：行号越界/非委派行返回 ok:false', () => {
   assert.equal(applySummaryToLines(['- [ ] x'], 5, { threadId: ID }).ok, false);
   assert.equal(applySummaryToLines(['- [ ] 无标记行'], 0, { threadId: ID }).ok, false);
+});
+
+// ---------- bugfix 回归: 行号漂移下按 threadId 现场定位 ----------
+
+test('locateDelegationLine: 按 threadId 现场扫文件定位,不依赖缓存行号', () => {
+  const A = 'aaaaaaaa-1111-2222-3333-444444444444';
+  const C = 'cccccccc-1111-2222-3333-444444444444';
+  const lines = [
+    '- [ ] 任务A',
+    `\t- [x] 旧总结  ⚡ t3:${A}#1`,
+    '- [ ] 任务B',
+    `\t- [x] 另一会话  ⚡ t3:${C}`
+  ];
+  // 缓存说在 1（已漂移），threadId=C 的行实际在第 3 行
+  const at = locateDelegationLine(lines, C, 1);
+  assert.equal(at, 3);
+});
+
+test('locateDelegationLine: 缓存行号仍然准确时直接命中', () => {
+  const T = 'aaaaaaaa-1111-2222-3333-444444444444';
+  const lines = ['- [ ] A', `\t- [x] s  ⚡ t3:${T}#1`, '- [ ] B'];
+  assert.equal(locateDelegationLine(lines, T, 1), 1);
+});
+
+test('locateDelegationLine: threadId 不存在返回 -1', () => {
+  assert.equal(locateDelegationLine(['- [ ] A'], 'aaaaaaaa-1111-2222-3333-444444444444', 0), -1);
 });

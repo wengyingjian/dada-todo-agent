@@ -24,7 +24,7 @@ SELECT t.thread_id, t.title, t.created_at, t.updated_at,
          ORDER BY m.created_at DESC, m.message_id DESC LIMIT 1) AS last_assistant_json,
        (SELECT count(*) FROM orchestration_v2_projection_messages m
          WHERE m.thread_id = t.thread_id AND m.role = 'user' AND m.streaming = 0
-           AND json_extract(m.payload_json, '$.createdBy') = 'user') AS prompt_count
+           AND json_extract(m.payload_json, '$.createdBy') != 'tool') AS prompt_count
 FROM orchestration_v2_projection_threads t
 LEFT JOIN projection_projects p ON p.project_id = t.project_id
 WHERE ${T3_SESSION_FILTER}

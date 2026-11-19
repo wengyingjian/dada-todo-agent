@@ -16,7 +16,7 @@ JOIN orchestration_v2_projection_threads t ON t.thread_id = m.thread_id
 WHERE m.thread_id = ${quote(threadId)}
   AND m.role IN ('user','assistant')
   AND m.streaming = 0
-  AND (m.role != 'user' OR json_extract(m.payload_json, '$.createdBy') = 'user')
+  AND (m.role != 'user' OR json_extract(m.payload_json, '$.createdBy') != 'tool')
   AND ${T3_SESSION_FILTER.replace(/t\./g, 't.')}
   AND t.deleted_at IS NULL
 ORDER BY m.created_at, m.message_id`;
