@@ -389,17 +389,14 @@ function listDailyFiles() {
 
 // 全库扫描：frontmatter tags 含任一「清单标记」的 md 文件 → [{ key: 'cl:<相对路径>', path, name }]
 // 注意：tags 数组可能含 null 项（YAML 空值），匹配前先归一化为字符串
+// 与项目视图的识别口径一致：任务/（projectsRoot）下的文件不再被排除，
+// 带 todoList 标签的项目文件（task-*.md）会同时出现在清单视图与项目视图。
 function checklistFileEntries() {
   const wanted = checklistTags();
   if (!wanted.length) return [];
   const mc = plugin.app.metadataCache;
   const out = [];
-  // [project-view] 项目数据库目录（默认「任务/」）里的 task-*.md 不进清单池：
-  // 这些文件由项目视图自己管理，混进清单会让清单/待办池出现整片项目任务
-  const projRoot = String((plugin.settings && plugin.settings.project && plugin.settings.project.projectsRoot) || '任务')
-    .replace(/^\/+|\/+$/g, '');
   for (const f of vault().getMarkdownFiles()) {
-    if (projRoot && (f.path === projRoot || f.path.indexOf(projRoot + '/') === 0)) continue;
     const cache = mc.getFileCache(f);
     const fm = cache && cache.frontmatter;
     if (!fm) continue;
