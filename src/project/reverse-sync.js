@@ -25,6 +25,10 @@ SELECT t.thread_id, t.title, t.created_at, t.updated_at,
        (SELECT m.payload_json FROM orchestration_v2_projection_messages m
          WHERE m.thread_id = t.thread_id AND m.role = 'assistant'
          ORDER BY m.created_at DESC, m.message_id DESC LIMIT 1) AS last_assistant_json,
+       (SELECT min(m.created_at) FROM orchestration_v2_projection_messages m
+         WHERE m.thread_id = t.thread_id) AS first_msg_at,
+       (SELECT max(m.created_at) FROM orchestration_v2_projection_messages m
+         WHERE m.thread_id = t.thread_id) AS last_msg_at,
        (SELECT count(*) FROM orchestration_v2_projection_messages m
          WHERE m.thread_id = t.thread_id AND m.role = 'user' AND m.streaming = 0
            AND json_extract(m.payload_json, '$.createdBy') != 'tool') AS prompt_count
@@ -59,7 +63,9 @@ export function mapThreadRow(row) {
     state: stateFromRun(runStatus, pendingKinds),
     promptCount: Number(row.prompt_count) || 0,
     firstUser: textOf(row.first_user_json),
-    lastAssistant: textOf(row.last_assistant_json)
+    lastAssistant: textOf(row.last_assistant_json),
+    firstMsgAt: Date.parse(row.first_msg_at) || 0,
+    lastMsgAt: Date.parse(row.last_msg_at) || 0
   };
 }
 
@@ -69,6 +75,27 @@ export function threadTitleOf(t) {
   const first = String(t.firstUser || '').replace(/\s+/g, ' ').trim();
   if (first) return first.slice(0, 40);
   return `T3 会话 ${String(t.threadId || '').replace(/-/g, '').slice(0, 6)}`;
+}
+
+// 任务行日期片段（dada-todo 口径）：
+// 跨天（或时间缺失）→ `🛫 <开始日期> `（如有结束日期再加 `📅 <结束日期>`）
+// 同天且有时段 → `HH:MM-HH:MM ` 前缀 + `📅 <当天>`
+// 返回 { timePrefix, dateSuffix }；timePrefix 以单个空格结尾，dateSuffix 以空格开头
+export function taskDateMeta(t) {
+  const start = Number(t.firstMsgAt) || 0;
+  const end = Number(t.lastMsgAt) || start;
+  if (!start) return { timePrefix: '', dateSuffix: '' };
+  const p = (n) => String(n).padStart(2, '0');
+  const key = (d) => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  const hm = (d) => `${p(d.getHours())}:${p(d.getMinutes())}`;
+  const sd = new Date(start);
+  const ed = new Date(end);
+  const sameDay = key(sd) === key(ed);
+  if (sameDay) {
+    return { timePrefix: `${hm(sd)}-${hm(ed)} `, dateSuffix: ` 📅 ${key(sd)}` };
+  }
+  const suffix = key(ed) !== key(sd) ? ` 📅 ${key(ed)}` : '';
+  return { timePrefix: '', dateSuffix: ` 🛫 ${key(sd)}${suffix}` };
 }
 
 export function chooseOwner(cwd, nodes) {

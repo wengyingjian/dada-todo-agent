@@ -10,7 +10,7 @@ import {
 import { isArchiveFile, pickArchiveFile } from './archive.js';
 import { extractDelegations, formatDelegationLine, parseDelegationLine, planDelegationInsert, T3_MARK } from './delegate-line.js';
 
-import { queryThreads, chooseOwner, threadTitleOf, classifyWorkspace, collectUnmatched, summarizeThreadsByCwd } from './reverse-sync.js';
+import { queryThreads, chooseOwner, threadTitleOf, taskDateMeta, classifyWorkspace, collectUnmatched, summarizeThreadsByCwd } from './reverse-sync.js';
 import { summarize, summarizeThread } from './delegate.js';
 import { shouldResummarize } from './summarize-llm.js';
 import { replaceSummaryInLines, locateDelegationLine } from './summarize-apply.js';
@@ -446,7 +446,8 @@ export async function syncOnce(plugin) {
       dirPath = filePath.split('/').slice(0, -1).join('/');
     }
     const key = 'cl:' + filePath.replace(/\.md$/i, '');
-    const r = unwrap(await API.createChecklistTask(key, '', { summary: threadTitleOf(t) }));
+    const meta = taskDateMeta(t);
+    const r = unwrap(await API.createChecklistTask(key, '', { summary: `${meta.timePrefix}${threadTitleOf(t)}${meta.dateSuffix}` }));
     if (!r || !r.ok) continue;
     await appendDelegation(plugin, { filePath, dirPath }, r.task.lineNo, {
       state: t.state || 'running',
@@ -533,7 +534,8 @@ export async function importThreadsToProject(plugin, node) {
       if (n && (c === n || c.startsWith(n + '/'))) { skipped += 1; continue; }
     }
     const key = listKeyOf(node.filePath);
-    const r = unwrap(await API.createChecklistTask(key, '', { summary: threadTitleOf(t) }));
+    const meta = taskDateMeta(t);
+    const r = unwrap(await API.createChecklistTask(key, '', { summary: `${meta.timePrefix}${threadTitleOf(t)}${meta.dateSuffix}` }));
     if (!r || !r.ok) { skipped += 1; continue; }
     await appendDelegation(plugin, node, r.task.lineNo, {
       state: t.state || 'completed',

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildScanSql, mapThreadRow, chooseOwner, threadTitleOf, classifyWorkspace, collectUnmatched, summarizeThreadsByCwd } from './reverse-sync.js';
+import { buildScanSql, mapThreadRow, chooseOwner, threadTitleOf, taskDateMeta, classifyWorkspace, collectUnmatched, summarizeThreadsByCwd } from './reverse-sync.js';
 import { buildProjectIndex } from './index.js';
 
 // summarizeThreadsByCwd：全量分组 + 最长前缀归属 + 忽略标注
@@ -102,4 +102,25 @@ test('未知工作区去重：首次见到的才进弹窗', () => {
   // 已提醒过的不再出现
   const r2 = collectUnmatched(['/repos/a', '/repos/c'], ['/repos/a']);
   assert.deepEqual(r2.items.map((x) => x.cwd), ['/repos/c']);
+});
+
+// taskDateMeta：跨天 → 🛫+📅；同天 → HH:MM-HH:MM 前缀 + 📅；无时间 → 空片段
+test('任务日期片段：跨天与同天两种写法', () => {
+  // 用本地时间构造数据（实现按本地时区判断跨天，与 dada 面板口径一致）
+  const mk = (y, mo, d, h, mi) => new Date(y, mo - 1, d, h, mi).getTime();
+  // 同天：09:30-11:45 + 📅 当天
+  const same = taskDateMeta({ firstMsgAt: mk(2026, 11, 19, 9, 30), lastMsgAt: mk(2026, 11, 19, 11, 45) });
+  assert.deepEqual(same, { timePrefix: '09:30-11:45 ', dateSuffix: ' 📅 2026-11-19' });
+  // 跨天：🛫 开始日 + 📅 结束日
+  const cross = taskDateMeta({ firstMsgAt: mk(2026, 11, 21, 23, 0), lastMsgAt: mk(2026, 11, 22, 1, 0) });
+  assert.equal(cross.timePrefix, '');
+  assert.equal(cross.dateSuffix, ' 🛫 2026-11-21 📅 2026-11-22');
+  // 无时间 → 空
+  assert.deepEqual(taskDateMeta({}), { timePrefix: '', dateSuffix: '' });
+});
+
+test('扫描 SQL 带首末消息时间', () => {
+  const sql = buildScanSql('2026-11-18T00:00:00.000Z');
+  assert.match(sql, /first_msg_at/);
+  assert.match(sql, /last_msg_at/);
 });
