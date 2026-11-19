@@ -769,6 +769,47 @@ export class DadaTodoSettingTab extends PluginSettingTab {
           });
         });
       }),
+      row('summaryLlmBaseUrl', 'summaryLlmBaseUrlDesc', (s) => {
+        s.addText((tx) => {
+          tx.setPlaceholder('https://api.deepseek.com/v1');
+          tx.setValue(plugin.settings.project.summaryLlmBaseUrl || '');
+          tx.onChange((value) => {
+            plugin.settings.project.summaryLlmBaseUrl = (value || '').trim();
+            plugin.saveSettings();
+          });
+        });
+      }),
+      row('summaryLlmModel', 'summaryLlmModelDesc', (s) => {
+        s.addText((tx) => {
+          tx.setPlaceholder('deepseek-chat');
+          tx.setValue(plugin.settings.project.summaryLlmModel || '');
+          tx.onChange((value) => {
+            plugin.settings.project.summaryLlmModel = (value || '').trim();
+            plugin.saveSettings();
+          });
+        });
+      }),
+      row('summaryLlmApiKey', 'summaryLlmApiKeyDesc', (s) => {
+        s.addText((tx) => {
+          tx.inputEl.type = 'password';
+          tx.setPlaceholder('sk-…');
+          tx.setValue(plugin.settings.project.summaryLlmApiKey || '');
+          tx.onChange((value) => {
+            plugin.settings.project.summaryLlmApiKey = (value || '').trim();
+            plugin.saveSettings();
+          });
+        });
+      }),
+      row('summarySilentMinutes', 'summarySilentMinutesDesc', (s) => {
+        s.addText((tx) => {
+          tx.setValue(String(plugin.settings.project.summarySilentMinutes != null ? plugin.settings.project.summarySilentMinutes : 30));
+          tx.onChange((value) => {
+            const n = Math.max(1, Math.min(720, Math.round(Number(value) || 30)));
+            plugin.settings.project.summarySilentMinutes = n;
+            plugin.saveSettings();
+          });
+        });
+      }),
     ]);
 
     // 关于置顶：让用户第一眼看到插件信息与求助入口（issue 反馈 / 重建索引入口也在此）

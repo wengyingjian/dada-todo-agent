@@ -10,6 +10,13 @@ export const DEFAULT_SETTINGS = {
   reverseSyncSeconds: 60,
   reverseSyncMinMinutes: 3,
   summaryMaxChars: 200,
+  // 委派总结 LLM（OpenAI 兼容 /v1/chat/completions；三项任一为空则不总结，回退截断行为）
+  summaryLlmBaseUrl: '',
+  summaryLlmModel: '',
+  summaryLlmApiKey: '',
+  summaryTimeoutSeconds: 30,
+  // 会话静默多少分钟后才允许「再总结」（与 #count 计数变化双门槛）
+  summarySilentMinutes: 30,
   // 首次启用时刻（-30 分钟）：只回传此后新建的会话，避免把历史会话一次性灌进日记
   syncSince: 0
 };

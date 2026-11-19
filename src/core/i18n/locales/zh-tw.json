@@ -392,5 +392,13 @@
     "linkTextPlaceholder": "連結（留空則用地址）",
     "linkDelete": "刪除連結",
     "linkUrlRequired": "請填寫連結地址"
-  }
+  },
+  "summaryLlmBaseUrl": "總結 LLM Base URL",
+  "summaryLlmBaseUrlDesc": "OpenAI 相容介位址（如 https://api.deepseek.com/v1）。三項（URL/模型/Key）任一為空則不啟用 LLM 總結，委派完成後回退為截斷文字。",
+  "summaryLlmModel": "總結 LLM 模型",
+  "summaryLlmModelDesc": "總結用的模型名稱（如 deepseek-chat、gpt-4o-mini）。",
+  "summaryLlmApiKey": "總結 LLM API Key",
+  "summaryLlmApiKeyDesc": "總結 LLM 的 API 金鑰，僅保存在本庫配置中。",
+  "summarySilentMinutes": "再總結靜默閾值（分鐘）",
+  "summarySilentMinutesDesc": "工作階段靜默超過該分鐘數且使用者追問數有增加時，重新總結並覆蓋舊的標題與分點。預設 30。"
 }

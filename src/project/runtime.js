@@ -10,7 +10,9 @@ import {
 import { isArchiveFile, pickArchiveFile } from './archive.js';
 import { extractDelegations, formatDelegationLine, parseDelegationLine, T3_MARK } from './delegate-line.js';
 import { queryThreads, chooseOwner, threadTitleOf } from './reverse-sync.js';
-import { summarize } from './delegate.js';
+import { summarize, summarizeThread } from './delegate.js';
+import { shouldResummarize } from './summarize-llm.js';
+import { replaceSummaryInLines } from './summarize-apply.js';
 import { DEFAULT_SETTINGS, mergeProjectSettings } from './settings.js';
 import * as API from '../core/api/tasks.js';
 
@@ -310,7 +312,7 @@ export async function rebuildDelegationMap(plugin) {
     const lines = splitFile(await plugin.app.vault.read(f)).lines;
     for (const d of extractDelegations(lines)) {
       if (!d.threadId) continue;
-      map.set(d.threadId, { filePath: f.path, lineNo: d.line, parentLine: d.parentLine, state: d.state, summary: d.summary });
+      map.set(d.threadId, { filePath: f.path, lineNo: d.line, parentLine: d.parentLine, state: d.state, summary: d.summary, summarizedPromptCount: d.summarizedPromptCount });
     }
   }
   return map;
@@ -322,10 +324,7 @@ export function hasDelegationMark(line) {
 
 // ---------- T3 Code 数据库与反向同步 ----------
 
-export function t3DbPath() {
-  const home = process.env.T3CODE_HOME || path.join(os.homedir(), '.t3');
-  return path.join(home, 'userdata', 'statev2.sqlite');
-}
+export { t3DbPath } from './t3-paths.js';
 
 export function t3EnvironmentId() {
   try {
@@ -395,6 +394,11 @@ export async function syncOnce(plugin) {
         const r = await updateDelegation(plugin, loc.filePath, t.threadId, { state: t.state });
         if (r.ok) updated += 1;
       }
+      // LLM 总结配置齐全时，按「静默 + #count 计数变化」双门槛重新总结已绑定会话
+      if (s.summaryLlmBaseUrl && s.summaryLlmApiKey && s.summaryLlmModel) {
+        const fresh = await resummarizeIfNeeded(plugin, t, loc, s);
+        if (fresh) updated += 1;
+      }
       continue;
     }
     if (ignored.has(t.threadId)) continue;
@@ -423,6 +427,37 @@ export async function syncOnce(plugin) {
     created += 1;
   }
   return { created, updated };
+}
+
+// 再总结决策与执行：会话静默超过阈值且 user prompt 计数相对子行 #count 有增加时，
+// 取全会话重新总结并整体替换子行总结块（覆盖只留最新）。失败静默跳过，不阻塞状态更新。
+export async function resummarizeIfNeeded(plugin, thread, loc, s) {
+  const decision = shouldResummarize({
+    state: thread.state || loc.state,
+    summarizedPromptCount: loc.summarizedPromptCount,
+    currentPromptCount: thread.promptCount,
+    updatedAt: thread.updatedAt
+  }, { silentMs: (Number(s.summarySilentMinutes) || 30) * 60000 });
+  if (!decision) return false;
+  const summary = await summarizeThread(plugin, {
+    threadId: thread.threadId,
+    dbPath: t3DbPath(),
+    settings: s
+  });
+  if (!summary || summary.promptCount <= (loc.summarizedPromptCount || 0)) return false;
+  const file = plugin.app.vault.getAbstractFileByPath(loc.filePath);
+  if (!(file instanceof TFile)) return false;
+  const { head, lines } = splitFile(await plugin.app.vault.read(file));
+  const r = replaceSummaryInLines(lines, loc.lineNo, {
+    state: thread.state || loc.state,
+    threadId: thread.threadId,
+    summarizedPromptCount: summary.promptCount,
+    title: summary.title,
+    points: summary.points
+  });
+  if (!r.ok) return false;
+  await plugin.app.vault.modify(file, joinFile(head, lines));
+  return true;
 }
 
 export async function ignoreThread(plugin, threadId) {

@@ -398,5 +398,13 @@
     "linkTextPlaceholder": "链接（留空则用地址）",
     "linkDelete": "删除链接",
     "linkUrlRequired": "请填写链接地址"
-  }
+  },
+  "summaryLlmBaseUrl": "总结 LLM Base URL",
+  "summaryLlmBaseUrlDesc": "OpenAI 兼容接口地址（如 https://api.deepseek.com/v1）。三项（URL/模型/Key）任一为空则不启用 LLM 总结，委派完成后回退为截断文本。",
+  "summaryLlmModel": "总结 LLM 模型",
+  "summaryLlmModelDesc": "总结用的模型名称（如 deepseek-chat、gpt-4o-mini）。",
+  "summaryLlmApiKey": "总结 LLM API Key",
+  "summaryLlmApiKeyDesc": "总结 LLM 的 API 密钥，仅保存在本库配置中。",
+  "summarySilentMinutes": "再总结静默阈值（分钟）",
+  "summarySilentMinutesDesc": "会话静默超过该分钟数且用户追问数有增加时，重新总结并覆盖旧的标题与分点。默认 30。"
 }

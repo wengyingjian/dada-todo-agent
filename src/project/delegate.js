@@ -4,6 +4,11 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { formatDelegationLine, parseDelegationLine, T3_MARK } from './delegate-line.js';
+import { applySummaryToLines } from './summarize-apply.js';
+import { buildTranscript, buildSummaryPrompt, countUserPrompts } from './summarize-llm.js';
+import { callSummaryLlm } from './summarize-llm-io.js';
+import { fetchThreadMessages } from './summarize-io.js';
+import { t3DbPath } from './t3-paths.js';
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
@@ -78,15 +83,17 @@ export function runT3({ binary, cwd, prompt, provider = '', model = '', extraArg
   });
 }
 
-// 子行生命周期：先插入占位，拿到 threadId 后补标记，最后落状态
+// 子行生命周期：先插入占位（显示委派 prompt 摘要），拿到 threadId 后补标记，
+// 最后落状态；completed/failed 时取全会话 transcript 交 LLM 总结（标题+分点）。
 export async function startDelegation(plugin, rt, opts) {
   const { node, task, prompt, cwd } = opts;
   const settings = rt.projectSettings(plugin);
   const binary = findT3Binary(settings.t3Binary);
   const maxChars = Number(settings.summaryMaxChars) || 200;
 
+  // 委派发出即显示委派内容摘要，而不是「进行中…」——发出去就能看到委派了什么
   const debut = await rt.appendDelegation(plugin, node, task.lineNo, {
-    state: 'running', summary: '进行中…', threadId: ''
+    state: 'running', summary: summarize(prompt, maxChars) || '进行中…', threadId: ''
   });
   const lineNo = debut.lineNo;
 
@@ -118,7 +125,7 @@ export async function startDelegation(plugin, rt, opts) {
       const recent = await rt.recentThreads(plugin, { minutes: 2 });
       const hit = recent.find((t) => !map.has(t.threadId) && t.cwd === cwd);
       if (hit) {
-        await finishLine(hit.threadId, 'running', '进行中…');
+        await finishLine(hit.threadId, 'running', summarize(prompt, maxChars) || '进行中…');
         clearInterval(backfill);
       }
     } catch { /* ignore */ }
@@ -143,11 +150,62 @@ export async function startDelegation(plugin, rt, opts) {
     } catch { /* ignore */ }
   }
   if (result.code === 0) {
-    await finishLine(threadId, 'completed', summarize(result.reply, maxChars) || '完成');
+    await finishWithSummary(plugin, rt, node, lineNo, threadId, 'completed', { prompt, fallback: summarize(result.reply, maxChars) || '完成', settings, dbPath: t3DbPath() });
   } else if (result.code === 2) {
     await finishLine(threadId, 'awaiting', '等你回答…');
   } else {
-    await finishLine(threadId, 'failed', summarize(result.stderr || result.reply, maxChars) || '失败');
+    await finishWithSummary(plugin, rt, node, lineNo, threadId, 'failed', { prompt, fallback: summarize(result.stderr || result.reply, maxChars) || '失败', settings, dbPath: t3DbPath() });
   }
   return { threadId, code: result.code };
+}
+
+// 完成路径：优先 LLM 总结（标题+分点），失败回退到截断文本。
+// 统计已总结的 user prompt 数记进 #count，反向同步据此判断是否需要再总结。
+async function finishWithSummary(plugin, rt, node, lineNo, threadId, state, { prompt, fallback, settings, dbPath }) {
+  let summary = null;
+  if (threadId) {
+    summary = await summarizeThread(plugin, {
+      threadId, dbPath,
+      settings,
+      delegationPrompt: prompt
+    });
+  }
+  const f = plugin.app.vault.getAbstractFileByPath(node.filePath);
+  if (!f) return;
+  const { head, lines } = rt.splitFile(await plugin.app.vault.read(f));
+  const at = (lineNo != null && parseDelegationLine(lines[lineNo]))
+    ? lineNo
+    : lines.findIndex((l) => { const d = parseDelegationLine(l); return d && d.threadId === threadId; });
+  if (at < 0) return;
+  const payload = summary
+    ? { state, threadId, summarizedPromptCount: summary.promptCount, title: summary.title, points: summary.points }
+    : { state, threadId, summarizedPromptCount: null };
+  const title = summary ? summary.title : fallback;
+  const r = applySummaryToLines(lines, at, { ...payload, title });
+  if (!r.ok) {
+    lines[at] = formatDelegationLine({ state, summary: fallback, threadId });
+  }
+  await plugin.app.vault.modify(f, rt.joinFile(head, lines));
+}
+
+// 取会话消息 → 构建 prompt → 调 LLM → 解析。任何一步失败返回 null（调用方回退）。
+export async function summarizeThread(plugin, { threadId, dbPath, settings, delegationPrompt = '' }) {
+  try {
+    const msgs = await fetchThreadMessages(dbPath || t3DbPath(), threadId);
+    if (!msgs.length) return null;
+    const promptCount = countUserPrompts(msgs);
+    const transcript = buildTranscript(msgs, { maxChars: 24000 });
+    const { system, user } = buildSummaryPrompt(delegationPrompt, transcript);
+    const llm = await callSummaryLlm({
+      baseUrl: settings.summaryLlmBaseUrl,
+      model: settings.summaryLlmModel,
+      apiKey: settings.summaryLlmApiKey,
+      system, user,
+      timeoutMs: (Number(settings.summaryTimeoutSeconds) || 30) * 1000
+    });
+    if (!llm) return null;
+    return { ...llm, promptCount };
+  } catch {
+    return null;
+  }
 }

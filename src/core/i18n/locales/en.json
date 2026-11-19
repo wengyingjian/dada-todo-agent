@@ -398,5 +398,13 @@
     "linkTextPlaceholder": "Link text (leave blank to use URL)",
     "linkDelete": "Delete link",
     "linkUrlRequired": "Please enter the link URL"
-  }
+  },
+  "summaryLlmBaseUrl": "Summary LLM Base URL",
+  "summaryLlmBaseUrlDesc": "OpenAI-compatible endpoint (e.g. https://api.deepseek.com/v1). If any of URL/model/key is empty, LLM summarization is disabled and the delegation falls back to truncated text.",
+  "summaryLlmModel": "Summary LLM model",
+  "summaryLlmModelDesc": "Model name used for summarization (e.g. deepseek-chat, gpt-4o-mini).",
+  "summaryLlmApiKey": "Summary LLM API key",
+  "summaryLlmApiKeyDesc": "API key for the summary LLM, stored in this vault's config only.",
+  "summarySilentMinutes": "Re-summarize silence threshold (min)",
+  "summarySilentMinutesDesc": "When a session has been silent for this many minutes AND its user-prompt count increased, re-summarize and overwrite the previous title and points. Default 30."
 }
