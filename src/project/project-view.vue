@@ -69,11 +69,32 @@
       </div>
     </div>
 
-    <!-- 输入框弹窗：Electron 不支持 window.prompt，只能用自绘的 -->
+    <!-- 输入框弹窗：Electron 不支持 window.prompt，只能用自绘的。
+         fields 为空是单输入框；有 fields 时逐行收集多个字段（如建项目时的名称+cwd） -->
     <div v-if="askState" class="pa-modal-mask" @click.self="closeAsk(null)">
       <div class="pa-modal pa-ask">
         <h4>{{ askState.title }}</h4>
+        <template v-if="askState.fields && askState.fields.length">
+          <label v-for="(f, i) in askState.fields" :key="f.key" class="pa-ask-field">
+            <span>{{ f.label }}</span>
+            <input
+              :ref="(el) => (askRefs[i] = el)"
+              v-model="askState.values[f.key]"
+              :placeholder="f.placeholder || ''"
+              @keydown.enter.prevent="closeAsk(askState.values)"
+              @keydown.esc.prevent="closeAsk(null)"
+            />
+            <button
+              v-if="f.pick === 'folder'"
+              type="button"
+              class="pa-btn pa-ask-browse"
+              title="从系统文件夹选择"
+              @click="browseFolder(i)"
+            >浏览…</button>
+          </label>
+        </template>
         <input
+          v-else
           ref="askInput"
           v-model="askState.value"
           class="pa-ask-input"
@@ -83,7 +104,7 @@
         />
         <div class="pa-modal-actions">
           <button class="pa-btn" @click="closeAsk(null)">取消</button>
-          <button class="pa-btn primary pa-ask-ok" @click="closeAsk(askState.value)">确定</button>
+          <button class="pa-btn primary pa-ask-ok" @click="closeAsk(askState.fields ? askState.values : askState.value)">确定</button>
         </div>
       </div>
     </div>
@@ -116,6 +137,7 @@ export default {
       showTree: false,
       modal: null,
       askState: null,
+      askRefs: {},
       refreshing: false
     };
   },
@@ -193,12 +215,38 @@ export default {
       if (s.has(path)) s.delete(path); else s.add(path);
       this.openSet = s;
     },
-    // 自绘输入弹窗（Electron 里 window.prompt 不可用）：返回用户输入或 null
+    // 系统文件夹选择对话框（Electron）；选完填回对应字段
+    async browseFolder(i) {
+      const f = this.askState && this.askState.fields && this.askState.fields[i];
+      if (!f) return;
+      try {
+        const electron = require('electron');
+        const dialog = (electron && electron.remote && electron.remote.dialog)
+          || (electron && electron.dialog)
+          || (() => { try { return require('@electron/remote').dialog; } catch { return null; } })();
+        if (!dialog || !dialog.showOpenDialog) throw new Error('找不到系统对话框');
+        const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+        if (!r.canceled && r.filePaths && r.filePaths[0]) this.askState.values[f.key] = r.filePaths[0];
+      } catch (e) {
+        new Notice('打不开文件夹选择：' + String(e.message || e));
+      }
+    },
+    // 自绘输入弹窗（Electron 里 window.prompt 不可用）：
+    //  - ask(title, initial, placeholder) 返回字符串或 null
+    //  - askFields(title, [{key,label,placeholder,value}]) 返回 {key: 值} 或 null
     ask(title, initial = '', placeholder = '') {
+      return this.askFields(title, [{ key: 'value', value: initial, placeholder }]).then(
+        (r) => (r == null ? null : r.value)
+      );
+    },
+    askFields(title, fields) {
+      // fields: [{ key, label, value, placeholder, pick?: 'folder' }]
       return new Promise((resolve) => {
-        this.askState = { title, value: String(initial == null ? '' : initial), placeholder, resolve };
+        const values = {};
+        for (const f of fields) values[f.key] = String(f.value == null ? '' : f.value);
+        this.askState = { title, fields, values, resolve };
         this.$nextTick(() => {
-          const el = this.$refs.askInput;
+          const el = (this.askRefs && this.askRefs[0]) || this.$refs.askInput;
           if (el) { el.focus(); if (el.select) el.select(); }
         });
       });
@@ -207,7 +255,8 @@ export default {
       const s = this.askState;
       if (!s) return;
       this.askState = null;
-      s.resolve(v == null ? null : String(v));
+      this.askRefs = {};
+      s.resolve(v == null ? null : v);
     },
     onSelect(n) {
       this.activeDir = n.dirPath;
@@ -285,11 +334,7 @@ export default {
     },
     async onTreeAction(action, node) {
       if (action === 'new-child') {
-        const name = await this.ask('子项目名称', '');
-        if (!name) return;
-        const r = await rt.createProject(this.plugin, node.dirPath, name);
-        if (!r.ok) new Notice('创建失败：' + r.reason);
-        await this.refresh();
+        await this.createProjectFlow(node.dirPath);
       } else if (action === 'rename') {
         const name = await this.ask('新的项目名', node.name);
         if (!name || name === node.name) return;
@@ -303,13 +348,33 @@ export default {
           if (f) this.plugin.app.workspace.getLeaf(false).openFile(f);
         }
       } else if (action === 'cwd') {
-        const v = await this.ask('项目 cwd（留空则继承）', node.ownCwd || '');
+        const v = await this.askFields('项目 cwd（留空则继承）', [
+          { key: 'cwd', value: node.ownCwd || '', placeholder: '/path/to/repo，留空则继承父级或默认', pick: 'folder' }
+        ]);
         if (v == null) return;
-        const r = await rt.setProjectCwd(this.plugin, node, v);
+        const r = await rt.setProjectCwd(this.plugin, node, v.cwd);
         if (!r.ok) new Notice('写入失败');
         await this.refresh();
         if (r.ok) this.applyCwd(node.dirPath, r.cwd);
       }
+    },
+    // 建项目：名称 + 可选 cwd 一起填；cwd 留空走继承
+    async createProjectFlow(parentDirPath) {
+      const vals = await this.askFields('新建项目', [
+        { key: 'name', label: '项目名称', placeholder: '例如 LoopForge' },
+        { key: 'cwd', label: '工作目录 cwd（可留空）', placeholder: '/path/to/repo，留空则继承父级或默认', pick: 'folder' }
+      ]);
+      if (!vals || !String(vals.name || '').trim()) return;
+      const r = await rt.createProject(this.plugin, parentDirPath, vals.name);
+      if (!r.ok) { new Notice('创建失败：' + r.reason); return; }
+      if (String(vals.cwd || '').trim()) {
+        const node = rt.nodeOf(this.plugin, r.dirPath);
+        const cw = await rt.setProjectCwd(this.plugin, node, vals.cwd);
+        if (!cw.ok) new Notice('cwd 写入失败');
+      }
+      await this.refresh();
+      const hit = this.index.byDir.get(r.dirPath);
+      if (hit) { this.activeDir = r.dirPath; this.applyCwd(r.dirPath, String(vals.cwd || '').trim()); }
     },
     // 元数据缓存还没刷新时，先在内存里把 cwd 生效，避免界面要等下一轮扫描
     applyCwd(dirPath, ownCwd) {
@@ -324,11 +389,7 @@ export default {
       for (const r of this.index.roots) walk(r, '');
     },
     async newRootProject() {
-      const name = await this.ask('项目名称', '');
-      if (!name) return;
-      const r = await rt.createProject(this.plugin, '', name);
-      if (!r.ok) new Notice('创建失败：' + r.reason);
-      await this.refresh();
+      await this.createProjectFlow('');
     }
   }
 };
@@ -436,6 +497,10 @@ export default {
 .pa-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .pa-ask h4 { margin: 0 0 10px; font-size: 15px; }
 .pa-ask input { width: 100%; }
+.pa-ask-field { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.pa-ask-field > span { flex: 0 0 auto; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.pa-ask-field input { flex: 1 1 auto; }
+.pa-ask-browse { flex: 0 0 auto; }
 .pa-view.tiny .pa-tree { position: absolute; z-index: 20; background: var(--background-primary); height: 100%; box-shadow: 0 0 12px rgba(0,0,0,.2); }
 .pa-view.tiny .pa-sessions { display: none; }
 </style>

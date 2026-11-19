@@ -53,12 +53,12 @@ const J = JSON.stringify;
 // ---------- 页面助手注入 ----------
 const INSTALL = String.raw`
 (() => {
-  if (window.__e2e && window.__e2e.__v === 8) return 'ready';
+  if (window.__e2e && window.__e2e.__v === 9) return 'ready';
   const app = window.app;
   const VIEW_SEL = '.workspace-leaf-content[data-type="dada-todo-agent-view"]';
   const root = () => document.querySelector(VIEW_SEL) || document;
   const h = {
-    __v: 8,
+    __v: 9,
     app,
     get plugin() { return app.plugins.plugins['dada-todo-agent']; },
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -196,10 +196,14 @@ const INSTALL = String.raw`
           const el = document.querySelector('.pa-ask');
           if (!el || el.dataset.e2eDone === '1') return;
           if (!window.__e2eAnswers || !window.__e2eAnswers.length) return;
-          const inp = el.querySelector('.pa-ask-input');
-          if (!inp) return;
+          const inputs = Array.from(el.querySelectorAll('.pa-ask-input, .pa-ask-field input'));
+          if (!inputs.length) return;
           el.dataset.e2eDone = '1';
-          h.setVal(inp, window.__e2eAnswers.shift());
+          const v = window.__e2eAnswers.shift();
+          const vals = Array.isArray(v) || (v && typeof v === 'object')
+            ? inputs.map((inp, i) => (v && typeof v === 'object' && !Array.isArray(v) ? (v[Object.keys(v)[i]] ?? '') : v[i]))
+            : inputs.map(() => v);
+          inputs.forEach((inp, i) => h.setVal(inp, String(vals[i] ?? '')));
           await h.sleep(80); // 等 v-model 把值同步进组件状态再点确定
           const ok = el.querySelector('.pa-ask-ok');
           if (ok) ok.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -459,7 +463,7 @@ await sleep(500);
 
 // ---------- 用例 ----------
 await runCase(1, '嵌套项目：新建父/子项目并解析任务', async () => {
-  await P.prompt(['工作']);
+  await P.prompt([{ name: '工作', cwd: '' }]);
   await P.eval(`__e2e.click(__e2e.q('.pa-tree-head .pa-act'))`);
   await poll(async () => P.exists(F.工作), { timeout: 8000, label: '父项目文件创建' });
 
@@ -467,7 +471,7 @@ await runCase(1, '嵌套项目：新建父/子项目并解析任务', async () =
   await sleep(150);
   const items = await P.inlineItems();
   assert(items.includes('新建子项目'), '节点菜单缺少「新建子项目」：' + items.join('|'));
-  await P.prompt(['LoopForge']);
+  await P.prompt([{ name: 'LoopForge', cwd: '' }]);
   await P.clickInline('新建子项目');
   await poll(async () => P.exists(F.LoopForge), { timeout: 8000, label: '子项目文件创建' });
 
