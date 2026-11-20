@@ -393,8 +393,6 @@
     "t3BinaryDesc": "Command or full path used to launch T3 Code. Leave empty to auto-detect (PATH first, then /usr/local/bin, /opt/homebrew/bin and similar).",
     "reverseSync": "Sync T3 Code sessions back",
     "reverseSyncDesc": "Periodically read T3 Code sessions created outside this plugin, match them to a project by working directory (or today's journal), and append them as a task plus one delegation line.",
-    "syncInterval": "Sync interval (seconds)",
-    "syncIntervalDesc": "How often session state is refreshed (running / needs you / done). Default 60, range 15–600.",
     "syncMinAge": "Minimum session age (minutes)",
     "syncMinAgeDesc": "Only sync sessions that started at least this many minutes ago, so a just-sent request isn't registered twice. Default 3; 0 disables the limit.",
     "summaryMaxChars": "Summary length (chars)",

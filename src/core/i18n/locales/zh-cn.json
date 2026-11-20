@@ -393,8 +393,6 @@
     "t3BinaryDesc": "启动 T3 Code 的命令或完整路径。留空则自动查找（先看 PATH，再看 /usr/local/bin、/opt/homebrew/bin 等常见位置）。",
     "reverseSync": "反向同步 T3 Code 会话",
     "reverseSyncDesc": "定时读取 T3 Code 的会话记录，把由本插件之外发起的会话按工作目录归属到项目（归属不到则写入当天日记），以「任务 + 一条委派记录」的形式补进文件。",
-    "syncInterval": "同步间隔（秒）",
-    "syncIntervalDesc": "每隔多少秒检查一次 T3 Code 会话状态，更新进行中 / 待你处理 / 已完成。默认 60 秒，范围 15–600。",
     "syncMinAge": "最短会话时长（分钟）",
     "syncMinAgeDesc": "只同步开始超过这么多分钟的会话，避免刚发出的请求就被重复登记。默认 3 分钟，0 表示不限制。",
     "summaryMaxChars": "摘要长度（字符）",

@@ -387,8 +387,6 @@
     "t3BinaryDesc": "啟動 T3 Code 的指令或完整路徑。留空則自動尋找（先看 PATH，再看 /usr/local/bin、/opt/homebrew/bin 等常見位置）。",
     "reverseSync": "反向同步 T3 Code 工作階段",
     "reverseSyncDesc": "定時讀取 T3 Code 的工作階段記錄，把由本外掛之外發起的工作階段依工作目錄歸屬到專案（歸屬不到則寫入當天日記），以「任務 + 一條委派記錄」的形式補進檔案。",
-    "syncInterval": "同步間隔（秒）",
-    "syncIntervalDesc": "每隔多少秒檢查一次 T3 Code 工作階段狀態，更新進行中 / 待你處理 / 已完成。預設 60 秒，範圍 15–600。",
     "syncMinAge": "最短工作階段時長（分鐘）",
     "syncMinAgeDesc": "只同步開始超過這麼多分鐘的工作階段，避免剛送出的請求被重複登記。預設 3 分鐘，0 表示不限制。",
     "summaryMaxChars": "摘要長度（字元）",

@@ -892,16 +892,6 @@ export class DadaTodoSettingTab extends PluginSettingTab {
           });
         });
       }),
-      row('syncInterval', 'syncIntervalDesc', (s) => {
-        s.addText((tx) => {
-          tx.setValue(String(plugin.settings.project.reverseSyncSeconds || 60));
-          tx.onChange((value) => {
-            const n = Math.max(15, Math.min(600, Math.round(Number(value) || 60)));
-            plugin.settings.project.reverseSyncSeconds = n;
-            plugin.saveSettings();
-          });
-        });
-      }),
       row('syncMinAge', 'syncMinAgeDesc', (s) => {
         s.addText((tx) => {
           tx.setValue(String(plugin.settings.project.reverseSyncMinMinutes || 3));

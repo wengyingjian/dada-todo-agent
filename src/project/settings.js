@@ -7,7 +7,8 @@ export const DEFAULT_SETTINGS = {
   t3Model: '',
   projectDefaultCwd: '',
   reverseSync: true,
-  reverseSyncSeconds: 60,
+  // 反向同步触发已收口到 thread-hub 快照广播（WAL 监听 + 20s 兜底），
+  // 旧 reverseSyncSeconds 不再参与调度；写清单节奏由 reverseSyncMinMinutes 控制
   reverseSyncMinMinutes: 3,
   summaryMaxChars: 200,
   // 委派总结 LLM（OpenAI 兼容 /v1/chat/completions；三项任一为空则不总结，回退截断行为）
