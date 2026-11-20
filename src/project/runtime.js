@@ -11,6 +11,7 @@ import {
 } from './index.js';
 import { pickArchiveFile } from './archive.js';
 import { computeAutoArchiveTarget } from './auto-archive-path.js';
+import { waitForFrontmatter } from './meta-wait.js';
 import { extractDelegations, formatDelegationLine, parseDelegationLine, planDelegationInsert, T3_MARK } from './delegate-line.js';
 import { groupOfState, ensureGroupHeadings, groupOfLine, isTaskLine, groupBlockLineOf, shouldMoveToGroup } from './groups.js';
 import { locateSessionLine, rewriteSessionLine, stripSessionMark } from './session-line.js';
@@ -997,6 +998,10 @@ export async function createProjectWithCwd(plugin, name, cwd, opts = {}) {
   }
   const r = await createProject(plugin, '', finalName);
   if (!r || !r.ok) return r;
+  // 新文件的 frontmatter 要等 metadataCache 解析完才能被 scanProjects 扫到；
+  // 不等就 nodeOf 会误报 no_node（文件其实建成功了）
+  const cache = plugin.app.metadataCache;
+  await waitForFrontmatter((p) => cache.getFileCache(p), r.filePath, { intervalMs: 50, timeoutMs: 3000 });
   const node = nodeOf(plugin, r.filePath);
   if (!node) return { ok: false, reason: 'no_node' };
   const cw = await setProjectCwd(plugin, node, cwd);
