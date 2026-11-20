@@ -187,14 +187,23 @@ async function main() {
     assert(domLast.includes(needle), `弹窗末条不是最新回复：dom=${domLast.slice(0, 40)} latest=${latest.text.slice(0, 40)}`);
     log('末条与 T3 最新回复一致');
 
-    log('6/8 在弹窗里发消息');
+    log('6/8 键盘：⌘↵ 换行、↵ 发送');
     const sent = `e2e-ui-send-${nonce}`;
-    await cdp.eval(`(() => {
+    const keys = await cdp.eval(`(() => {
       const input = document.querySelector('.dada-conversation .dada-composer__input');
+      const press = (opts) => input.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter', bubbles: true, cancelable: true, ...opts
+      }));
+      input.value = '第一行';
+      const metaPrevented = !press({ metaKey: true });
       input.value = ${JSON.stringify(sent)};
-      document.querySelector('.dada-conversation .dada-composer__send').click();
-      return true;
+      const enterPrevented = !press({});
+      const bubbles = [...document.querySelectorAll('.dada-conversation .ad-conversation__message.is-user')];
+      return { metaPrevented, enterPrevented, bubble: bubbles.some((b) => (b.innerText || '').includes(${JSON.stringify(sent)})) };
     })()`);
+    assert(keys.metaPrevented === false, '⌘↵ 不应拦截默认行为（换行）');
+    assert(keys.enterPrevented === true, '↵ 应被拦截并发送');
+    assert(keys.bubble, '↵ 后应立即出现乐观用户气泡');
     await poll(() => cdp.eval(`(() => {
       const bubbles = [...document.querySelectorAll('.dada-conversation .ad-conversation__message.is-user')];
       return bubbles.some((b) => (b.innerText || '').includes(${JSON.stringify(sent)}));

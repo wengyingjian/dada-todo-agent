@@ -328,6 +328,8 @@ export default class DadaTodoPlugin extends Plugin {
       projectLlmDisabledWorkspaces: Array.isArray(data.projectLlmDisabledWorkspaces) ? data.projectLlmDisabledWorkspaces : [],
       // 委派承载文件：在项目根/日记文件夹之外的普通笔记里委派时登记，反向同步一并扫描
       projectDelegationFiles: Array.isArray(data.projectDelegationFiles) ? data.projectDelegationFiles : [],
+      // T3 全权限授权（OAuth 换来的 30 天 token）：原样透传，授权/撤销时整体替换
+      t3Auth: data.t3Auth && typeof data.t3Auth === 'object' ? data.t3Auth : null,
       // 任务到点提醒总开关：默认关（避免更新后对所有任务突然弹通知），开启后即时生效并自带提示音
       remindEnabled: data.remindEnabled === true,
       // 提醒通道：system=系统通知（桌面端，需授权，不可用自动回落）/ in-app=只用 Obsidian 内提示

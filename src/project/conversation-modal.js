@@ -4,8 +4,10 @@ import { Component, MarkdownRenderer, Modal, Notice, setIcon } from 'obsidian';
 import * as rt from './runtime.js';
 import { threadTitleOf } from './reverse-sync.js';
 import { workspaceLabel } from './session-groups.js';
-import { buildAnswers, normalizeMessages, sendMode, shouldStickToBottom } from './conversation.js';
+import { buildAnswers, isActiveStatus, isSendKey, normalizeMessages, shouldStickToBottom } from './conversation.js';
 import { getT3Client } from './t3-obsidian.js';
+import { isModeEscalation } from './t3-client.js';
+import { T3AuthModal } from './auth-modal.js';
 import { T3_ICON } from './assets/t3code-icon.js';
 import { t } from '../core/i18n/index.js';
 
@@ -61,12 +63,6 @@ export class ConversationModal extends Modal {
     this.questionsEl = el.createDiv({ cls: 'dada-questions' });
     this.buildComposer(el);
 
-    this.scope.register(['Mod'], 'Enter', (event) => {
-      event.preventDefault();
-      this.send();
-      return false;
-    });
-
     await this.load();
     this.timer = window.setInterval(() => {
       if (this.closed) return;
@@ -111,18 +107,22 @@ export class ConversationModal extends Modal {
       cls: 'dada-composer__input',
       attr: { placeholder: t('conversation.placeholder'), rows: '3' }
     });
+    this.inputEl.addEventListener('keydown', (event) => {
+      if (!isSendKey(event)) return;
+      event.preventDefault();
+      this.send();
+    });
     const row = wrap.createDiv({ cls: 'dada-composer__row' });
     row.createSpan({ cls: 'dada-composer__hint', text: t('conversation.sendHint') });
+    // 说明并进发送按钮左边，不再单独占一行
+    setLucide(row.createSpan({ cls: 'ad-conv-foot__ico' }), 'info');
+    this.footTextEl = row.createSpan({ cls: 'dada-composer__foot', text: t('conversation.foot') });
     this.sendBtn = row.createEl('button', {
       cls: 'ad-btn ad-btn--cta dada-composer__send',
       text: t('conversation.send'),
       attr: { type: 'button' }
     });
     this.sendBtn.onclick = () => this.send();
-
-    this.footEl = el.createDiv({ cls: 'ad-conv-foot' });
-    setLucide(this.footEl.createSpan({ cls: 'ad-conv-foot__ico' }), 'info');
-    this.footTextEl = this.footEl.createSpan({ text: t('conversation.foot') });
   }
 
   async load() {
@@ -308,7 +308,7 @@ export class ConversationModal extends Modal {
       text: t('conversation.submit'),
       attr: { type: 'button' }
     });
-    submit.onclick = () => this.submitRequest(request, submit);
+    submit.onclick = () => this.submitRequest(request, card, submit);
     refreshSubmit();
   }
 
@@ -325,11 +325,13 @@ export class ConversationModal extends Modal {
     }
   }
 
-  async submitRequest(request, button) {
+  async submitRequest(request, card, button) {
     const { answers, missing } = buildAnswers(request.questions, this.drafts);
     if (missing.length) return;
     button.disabled = true;
     try {
+      // 提交前重取客户端：授权刚完成时，旧 client 里还是 approval-required 的临时 token。
+      this.client = getT3Client(this.plugin);
       await this.client.respondPending(this.thread.threadId, request.requestId, answers);
       this.pending = this.pending.filter((p) => p.requestId !== request.requestId);
       this.pendingSignature = '';
@@ -337,8 +339,42 @@ export class ConversationModal extends Modal {
       this.load();
     } catch (error) {
       button.disabled = false;
-      new Notice(t('conversation.answerFailed', { error: error.message || String(error) }));
+      if (isModeEscalation(error)) {
+        this.showAnswerBlocked(card);
+        return;
+      }
+      console.warn('[DadaAgent] 提交回答失败：', error);
+      new Notice(t('conversation.answerFailed'));
     }
+  }
+
+  // 全权限会话不允许外部客户端代答：给一个明确的就地提示和出口，别只弹一条看不懂的报错。
+  showAnswerBlocked(card) {
+    if (!card || card.querySelector('.dada-question__blocked')) return;
+    const box = card.createDiv({ cls: 'dada-question__blocked' });
+    box.createDiv({ cls: 'dada-question__blocked-text', text: t('conversation.answerNeedsApp') });
+    const authorize = box.createEl('button', {
+      cls: 'ad-btn ad-btn--cta dada-question__authorize',
+      text: t('conversation.authorizeAnswer'),
+      attr: { type: 'button' }
+    });
+    authorize.onclick = () => new T3AuthModal(this.app, this.plugin, {
+      onDone: () => {
+        // 授权成功：换用新客户端，拆掉拦截提示并放开提交按钮，让用户直接补交这次回答。
+        this.client = getT3Client(this.plugin);
+        card.querySelector('.dada-question__blocked')?.remove();
+        const submit = card.querySelector('.dada-question__submit');
+        if (submit) submit.disabled = false;
+      }
+    }).open();
+    const open = box.createEl('button', {
+      cls: 'ad-btn ad-btn--soft dada-question__open',
+      text: t('conversation.openInT3'),
+      attr: { type: 'button' }
+    });
+    open.onclick = () => this.openInT3();
+    const submit = card.querySelector('.dada-question__submit');
+    if (submit) submit.disabled = true;
   }
 
   async send() {
@@ -350,15 +386,17 @@ export class ConversationModal extends Modal {
     this.messages = [...this.messages, local];
     this.stick = true;
     this.renderMessages(true);
+    // 先清空再等 CLI：正好赶上用户接着打字时，不要把新输入一起清掉。
+    this.inputEl.value = '';
     try {
-      await this.client.sendMessage(this.thread.threadId, text, { mode: sendMode(this.status) });
-      this.inputEl.value = '';
+      await this.client.sendMessageCli(this.thread.threadId, text);
       window.setTimeout(() => this.load(), 400);
     } catch (error) {
       local.failed = true;
       this.renderMessages(true);
+      if (!this.inputEl.value.trim()) this.inputEl.value = text;
       console.warn('[DadaAgent] 发送消息失败：', error);
-      new Notice(t('conversation.sendFailed', { error: error.message || String(error) }));
+      new Notice(t('conversation.sendFailed'));
     } finally {
       this.sending = false;
       if (!this.closed) this.sendBtn.disabled = false;
@@ -366,7 +404,7 @@ export class ConversationModal extends Modal {
   }
 
   isActive() {
-    return ['preparing', 'starting', 'running', 'waiting', 'queued'].includes(this.status);
+    return isActiveStatus(this.status);
   }
 
   renderFoot() {
@@ -378,7 +416,7 @@ export class ConversationModal extends Modal {
       return;
     }
     this.inputEl.disabled = false;
-    this.sendBtn.disabled = false;
+    this.sendBtn.disabled = this.sending;
     this.footTextEl.textContent = t('conversation.foot');
   }
 

@@ -7,8 +7,12 @@ const ROLE_BY_TYPE = {
   assistant_message: 'assistant'
 };
 
-// 活跃回合：此时发送必须排队，否则 T3 会把它当成 steer 插进当前回合。
+// 活跃回合：弹窗用它显示「正在回复…」；发送本身由 T3 自动排队，客户端不用区分。
 const ACTIVE_STATUSES = new Set(['preparing', 'starting', 'running', 'waiting', 'queued']);
+
+export function isActiveStatus(status) {
+  return ACTIVE_STATUSES.has(status);
+}
 
 function emptyDraft(question) {
   return { selections: [], custom: '', ...(question && question.__draft) };
@@ -71,12 +75,15 @@ export function buildAnswers(questions, draft = {}) {
   return { answers, missing };
 }
 
+// 输入框快捷键：↵ 发送；⌘/Ctrl/Shift↵ 换行；输入法组字中的 ↵ 交给输入法。
+export function isSendKey(event) {
+  if (!event || event.key !== 'Enter') return false;
+  if (event.isComposing) return false;
+  return !(event.metaKey || event.ctrlKey || event.shiftKey);
+}
+
 // 消息区距底 80px 内就算「贴底」；用户主动上翻后不再强制跟随。
 export function shouldStickToBottom({ scrollTop = 0, scrollHeight = 0, clientHeight = 0 } = {}, threshold = 80) {
   return scrollHeight - scrollTop - clientHeight <= threshold;
 }
 
-// 忙碌时 queue（当作下一轮），空闲时 auto（立即开跑）。
-export function sendMode(status) {
-  return ACTIVE_STATUSES.has(status) ? 'queue' : 'auto';
-}

@@ -7,6 +7,7 @@ import { setColorScheme, setWeekStart, tagColorOf, usedTagColors, EXTRA_SCHEME_O
 import { VIEW_MENU_ITEMS, DEFAULT_MENU_VIEWS, reorderViews } from '../composables/viewMenu.js';
 import WorkspaceManager from '../../project/WorkspaceManager.vue';
 import { DEFAULT_SUMMARY_SYSTEM } from '../../project/summarize-llm.js';
+import { T3AuthModal } from '../../project/auth-modal.js';
 
 // 自检新版：比对 GitHub 仓库 main 分支 manifest 的 version 与本地版本
 const UPDATE_REPO = 'Plover-PY/obsidian-DadaTodoList';
@@ -851,6 +852,15 @@ export class DadaTodoSettingTab extends PluginSettingTab {
             plugin.settings.project.t3Model = (value || '').trim();
             plugin.saveSettings();
           });
+        });
+      }),
+      row('t3Authorize', 't3AuthorizeDesc', (s) => {
+        s.addButton((btn) => {
+          const apply = () => btn.setButtonText(
+            plugin.settings?.t3Auth?.token ? T('t3AuthorizeRedo') : T('t3AuthorizeBtn')
+          );
+          apply();
+          btn.onClick(() => new T3AuthModal(app, plugin, { onDone: apply }).open());
         });
       }),
       row('reverseSync', 'reverseSyncDesc', (s) => {

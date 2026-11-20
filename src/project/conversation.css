@@ -269,12 +269,19 @@
 }
 .dada-conversation .dada-option {
   appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  width: 100%;
   text-align: left;
   border: 1px solid var(--ad-line);
   border-radius: var(--ad-radius-sm);
   background: var(--background-primary);
   box-shadow: none;
-  padding: 8px 11px;
+  min-height: 52px;
+  height: auto;
+  padding: 10px 12px;
   cursor: pointer;
   font-size: 12.5px;
   line-height: 1.45;
@@ -290,10 +297,14 @@
 }
 .dada-conversation .dada-option__label {
   font-weight: 650;
+  text-align: left;
 }
 .dada-conversation .dada-option__desc {
   margin-top: 2px;
   font-size: 11.5px;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
   color: var(--ad-muted);
 }
 .dada-conversation .dada-question__custom {
@@ -323,6 +334,21 @@
 }
 .dada-conversation .dada-question__submit {
   margin-left: auto;
+}
+.dada-conversation .dada-question__blocked {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: var(--ad-radius-sm);
+  background: rgba(214, 158, 84, .1);
+}
+.dada-conversation .dada-question__blocked-text {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ad-ink);
 }
 
 /* 输入区 */
@@ -362,23 +388,81 @@
   font-size: 11px;
   color: var(--ad-muted);
 }
-.dada-conversation .dada-composer__send {
-  margin-left: auto;
-}
-.dada-conversation .ad-conv-foot {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--ad-line);
-  font-size: 11.5px;
+.dada-conversation .dada-composer__foot {
+  font-size: 11px;
   line-height: 1.5;
   color: var(--ad-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dada-conversation .dada-composer__send {
+  margin-left: auto;
 }
 .dada-conversation .ad-conv-foot__ico {
   display: inline-flex;
   flex: none;
   width: 13px;
   height: 13px;
+  color: var(--ad-muted);
+}
+
+/* T3 授权弹窗 */
+.modal.dada-auth-modal {
+  width: min(560px, 94vw);
+}
+.dada-auth .dada-auth__title {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+.dada-auth .dada-auth__intro {
+  margin: 0 0 14px;
+  color: var(--ad-muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.dada-auth .dada-auth__status {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ad-ink);
+}
+.dada-auth .dada-auth__status.is-waiting { color: var(--ad-warn); }
+.dada-auth .dada-auth__status.is-error { color: var(--ad-bad); }
+.dada-auth .dada-auth__status.is-ok { color: var(--ad-good); }
+.dada-auth .dada-auth__code {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--ad-line);
+  border-radius: var(--ad-radius-sm);
+  background: var(--ad-surface);
+}
+.dada-auth .dada-auth__codehint {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ad-muted);
+}
+.dada-auth .dada-auth__coderow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.dada-auth .dada-auth__codevalue {
+  flex: 1 1 auto;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--background-primary);
+  font-family: var(--ad-figure);
+  font-size: 14px;
+  letter-spacing: .1em;
+  text-align: left;
+}
+.dada-auth .dada-auth__links {
+  margin-top: 10px;
+}
+.dada-auth .dada-auth__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
 }

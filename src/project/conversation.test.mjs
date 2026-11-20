@@ -4,7 +4,8 @@ import {
   normalizeMessages,
   buildAnswers,
   shouldStickToBottom,
-  sendMode
+  isActiveStatus,
+  isSendKey
 } from './conversation.js';
 
 // MCP t3_thread_read 的 messages 是 newest-first，且带 position。
@@ -117,11 +118,21 @@ test('滚动判定：距底 80px 内视为贴底，超过则视为用户上翻�
   assert.equal(shouldStickToBottom({ scrollTop: 700, scrollHeight: 1000, clientHeight: 100 }), false);
 });
 
-test('发送模式：只要还有活跃回合就排队，空闲才直接发送', () => {
+test('回车发送：修饰键换行，输入法组字不发送', () => {
+  assert.equal(isSendKey({ key: 'Enter' }), true);
+  assert.equal(isSendKey({ key: 'Enter', metaKey: true }), false);
+  assert.equal(isSendKey({ key: 'Enter', ctrlKey: true }), false);
+  assert.equal(isSendKey({ key: 'Enter', shiftKey: true }), false);
+  assert.equal(isSendKey({ key: 'Enter', isComposing: true }), false);
+  assert.equal(isSendKey({ key: 'a' }), false);
+  assert.equal(isSendKey(null), false);
+});
+
+test('活跃状态决定是否显示「正在回复…」', () => {
   for (const status of ['running', 'waiting', 'starting', 'preparing', 'queued']) {
-    assert.equal(sendMode(status), 'queue', `${status} 应排队`);
+    assert.equal(isActiveStatus(status), true, `${status} 是活跃状态`);
   }
   for (const status of ['idle', 'completed', 'failed', 'cancelled', undefined, null]) {
-    assert.equal(sendMode(status), 'auto', `${status} 应直接发送`);
+    assert.equal(isActiveStatus(status), false, `${status} 不是活跃状态`);
   }
 });

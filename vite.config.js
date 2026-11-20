@@ -75,7 +75,9 @@ export default defineConfig({
         'obsidian', 'electron', '@electron/remote',
         // CM6 由 Obsidian 宿主提供，插件自带副本会导致编辑器创建失败（"打开失败"）
         '@codemirror/state', '@codemirror/view', '@codemirror/commands', '@codemirror/language', '@codemirror/search',
-        'child_process', 'fs', 'os', 'path', 'node:child_process', 'node:fs', 'node:os', 'node:path'
+        'child_process', 'fs', 'os', 'path', 'node:child_process', 'node:fs', 'node:os', 'node:path',
+        // T3 授权：本地回环回调端口 + PKCE，都跑在 Obsidian 的 Node 环境里
+        'http', 'node:http', 'crypto', 'node:crypto'
       ],
       output: {
         // 手机端 webview 无 process 全局时的兜底（仅不存在时注入）
