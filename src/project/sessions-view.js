@@ -15,6 +15,10 @@ import { t } from '../core/i18n/index.js';
 export const SESSIONS_VIEW_TYPE = 'dada-todo-agent-sessions-view';
 export const SESSIONS_RIBBON_ICON = 'messages-square';
 
+// AgentDeck 里 T3 Code 的配色（constants.js: t3code）
+const AGENT_COLOR = '#6f8ab8';
+const AGENT_SOFT = 'rgba(111,138,184,.13)';
+
 // 侧栏刷新：走 thread-hub 中央会话源（WAL 监听 + 20s 兜底 + 手动刷新），
 // 不再自己 fs.watch / setInterval——与反向同步共享同一份查询结果。
 const REFRESH_MS = 20 * 1000;
@@ -54,7 +58,7 @@ export class SessionsView extends ItemView {
     this.contentEl.classList.add('dada-sessions');
     this.addAction('refresh-cw', t('sessions.refresh'), () => this.refresh());
     // 订阅中央会话源：快照到达即渲染（hub 内部有 WAL 防抖与 20s 兜底）
-    this._unsub = rt.subscribeThreads((threads) => {
+    this._unsub = rt.subscribeThreads(this.plugin, (threads) => {
       this.threads = threads;
       this._loading = false;
       this.render();
