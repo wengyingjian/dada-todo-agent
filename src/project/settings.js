@@ -1,6 +1,6 @@
-// 项目视图设置默认值（独立文件，避免 main.js 与 runtime.js 之间的依赖环）
+// 项目相关设置默认值（独立文件，避免 main.js 与 runtime.js 之间的依赖环）。
+// 旧 projectsRoot（项目根目录）已废除：项目落点统一跟随核心 checklistFolder 设置。
 export const DEFAULT_SETTINGS = {
-  projectsRoot: '任务',
   t3Binary: '',
   // 委派时指定模型（留空用 T3 项目的默认模型）；新建的 T3 项目没有默认模型时必须填
   t3Provider: '',

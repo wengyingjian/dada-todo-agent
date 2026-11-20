@@ -121,15 +121,6 @@ export async function ensureProjectFile(plugin, node) {
   return node.filePath;
 }
 
-async function ensureFolder(plugin, folder) {
-  if (!folder) return;
-  const exists = plugin.app.vault.getAbstractFileByPath(folder);
-  if (exists) return;
-  const parent = folder.split('/').slice(0, -1).join('/');
-  if (parent) await ensureFolder(plugin, parent);
-  try { await plugin.app.vault.createFolder(folder); } catch (e) { /* 并发创建 */ }
-}
-
 export async function createTask(plugin, node, summary) {
   const text = String(summary || '').trim();
   if (!text) return { ok: false, reason: 'missing_summary' };
@@ -165,7 +156,7 @@ export async function renameProject(plugin, node, newName) {
   const n = String(newName || '').trim();
   if (!n) return { ok: false, reason: 'empty' };
   const dir = node.dirPath || rootOf(plugin);
-  const newPath = `${dir}/${n}.md`;
+  const newPath = `${dir ? dir + '/' : ''}${n}.md`;
   const r = await API.renameListFile(node.filePath, newPath);
   if (!r.ok) return { ok: false, reason: r.reason || 'rename_failed' };
   return { ok: true, dirPath: dir, filePath: r.path };
@@ -675,7 +666,7 @@ export async function ignoreThread(plugin, threadId) {
 // 会话导入为「任务 + 委派子行」。返回 { imported, skipped }。
 // opts.llm 为真时逐会话调 LLM 总结（配置缺失或调用失败回落截断摘要）。
 export async function importThreadsToProject(plugin, node, opts = {}) {
-  if (!node || !node.dirPath) return { imported: 0, skipped: 0, reason: 'no_node' };
+  if (!node || !node.filePath) return { imported: 0, skipped: 0, reason: 'no_node' };
   await ensureProjectFile(plugin, node);
   const s = projectSettings(plugin);
   const maxChars = Number(s.summaryMaxChars) || 200;
@@ -687,11 +678,11 @@ export async function importThreadsToProject(plugin, node, opts = {}) {
   const idx = scanProjects(plugin);
   const targetCwd = normalizeCwd(node.cwd || '');
   if (!targetCwd) return { imported: 0, skipped: 0, reason: 'no_cwd' };
-  const targetDir = normalizeCwd(node.dirPath);
+  const targetPath = normalizeCwd(node.filePath);
   // 该会话是否真的归属本项目：cwd 落在项目下、且没有被更具体的显式设置覆盖
   const belongsHere = (cwd) => {
     const cls = classifyWorkspace(cwd, idx.nodes, ignored, journal);
-    return cls.type === 'project' && !!cls.node && normalizeCwd(cls.node.dirPath) === targetDir;
+    return cls.type === 'project' && !!cls.node && normalizeCwd(cls.node.filePath) === targetPath;
   };
 
   // 分组写入：先补齐 ### 标题（createChecklistTask 对缺失分组返回 404）
@@ -786,15 +777,15 @@ async function applySummaryAtLine(plugin, node, lineNo, summary) {
 // 剪切进项目任务文件——父任务行 + 子行 + 总结描述行一起搬，日记里删干净。
 // 返回 { moved, files: [被清理的文件路径] }
 export async function moveDelegationsToProject(plugin, node) {
-  if (!node || !node.filePath || !node.dirPath) return { moved: 0, files: [], reason: 'no_node' };
+  if (!node || !node.filePath) return { moved: 0, files: [], reason: 'no_node' };
   const targetCwd = normalizeCwd(node.cwd || '');
   if (!targetCwd) return { moved: 0, files: [], reason: 'no_cwd' };
-  const targetDir = normalizeCwd(node.dirPath);
+  const targetPath = normalizeCwd(node.filePath);
   const { ignored, journal } = workspaceLists(plugin);
   const idx = scanProjects(plugin);
   const belongsHere = (cwd) => {
     const cls = classifyWorkspace(cwd, idx.nodes, ignored, journal);
-    return cls.type === 'project' && !!cls.node && normalizeCwd(cls.node.dirPath) === targetDir;
+    return cls.type === 'project' && !!cls.node && normalizeCwd(cls.node.filePath) === targetPath;
   };
 
   // cwd → threadId 集合（全量查一次；子目录被显式切成日记/忽略的不搬）
