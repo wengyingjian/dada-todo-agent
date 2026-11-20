@@ -505,7 +505,7 @@ export async function loadChecklistGroups(listKey) {
     const m = /^###\s+(.+?)\s*$/.exec(line);
     if (m) headings.push({ lineNo: idx, title: m[1].trim() });
   });
-  const records = flattenTasks(doc.roots).map((n) => recordOf(listKey, n));
+  const records = flattenTasks(doc.roots).map((n) => recordOf(listKey, n, { file: path }));
   const titled = headings.map((h) => ({ title: h.title, tasks: [] }));
   const ungrouped = [];
   for (const t of records) {
@@ -678,12 +678,9 @@ export async function createChecklistTask(listKey, groupTitle, task) {
 
   let insertAt;
   if (!groupTitle) {
-    // 无 ### 标题时插到文件末尾，但先跳过尾部空行（文件以 \n 结尾时 split 会产生
-    // 空串行，直接用 lines.length 会把新任务插到最后一个换行之后，任务行前多出空行）
-    insertAt = headings.length ? headings[0].idx : doc.lines.length;
-    if (!headings.length) {
-      while (insertAt > 0 && !String(doc.lines[insertAt - 1] || '').trim()) insertAt--;
-    }
+    // 未分组新建：插到文件最开头（frontmatter 之后的正文第一行）。清单文件常有 ###
+    // 标题，追加到末尾会归入最后一个分组；放最开头则保证落在所有标题之前（未分组区）。
+    insertAt = 0;
   } else {
     const h = headings.find((x) => x.title === groupTitle);
     if (!h) return res(404, { ok: false, reason: 'group_not_found' });
@@ -742,6 +739,55 @@ export async function moveChecklistTask(listKey, guid, targetGroupTitle) {
   keep.splice(insertAt, 0, ...serializeBlock(node, node.indentStr));
   await writeTasks(path, doc.head, keep);
   return res(200, { ok: true, task: recordOf(listKey, node) });
+}
+
+// 将任务整块移动到另一份清单（跨文件）：目标为 cl: 键时插到该清单文件末尾；
+// 目标为收件箱（INBOX_KEY）时插到收件箱末尾。目标无效返回 400，原任务不存在返回 404。
+// 日期语义跟随归属转换（与 createTask / updateTask 一致）：清单 / 收件箱只留行内 📅，
+// 🛫 剥离（文件即开始日的语义只属于日记）。
+export async function moveTaskToList(guid, targetKey) {
+  noteSelfWrite();
+  const g = parseGuid(guid);
+  if (!g) return res(400, { ok: false, reason: 'bad_guid' });
+  const isCl = isListKey(targetKey);
+  if (targetKey !== INBOX_KEY && !isCl) return res(400, { ok: false, reason: 'bad_target' });
+  const srcPath = pathOf(g);
+  if (!srcPath) return res(400, { ok: false, reason: 'bad_guid' });
+  const srcDoc = await readTasks(srcPath, g.dateKey);
+  const node = locateNode(srcDoc.roots, { lineNo: g.lineNo });
+  if (!node) return res(404, { ok: false, reason: 'not_found' });
+  const dstPath = taskFilePath(targetKey);
+  if (!dstPath) return res(400, { ok: false, reason: 'bad_target' });
+  if (dstPath === srcPath) return res(200, { ok: true, task: recordOf(g.dateKey, node, { file: srcPath }) });
+
+  // 日记文件的任务日期存在「文件名」里：搬到清单 / 收件箱前转成行内 🛫 / 📅，避免日期丢失。
+  // 行内已有值以行为准；🛫 有值时 📅 至少与开始日持平（否则清单里只显示开始）。
+  // 清单保留 🛫 / 📅（与 createChecklistTask 一致）；收件箱语义为「无日期」，两个标记都剥掉。
+  if (/^\d{4}-\d{2}-\d{2}$/.test(g.dateKey)) {
+    if (!node.start) node.start = g.dateKey;
+    if (!node.due || node.due < node.start) node.due = node.start;
+  }
+  if (!isCl) { node.start = ''; node.due = ''; }
+
+  // 删除源文件中的整块（含描述行与子任务）
+  const removed = new Set(collectLineNos(node));
+  const keep = srcDoc.lines.filter((_, i) => !removed.has(i));
+  await writeTasks(srcPath, srcDoc.head, keep);
+
+  await ensureTaskFile(targetKey, dstPath);
+  const dst = await readTasks(dstPath, targetKey);
+  // 清单目标：插到正文最开头（与未分组新建同规则，避免归入最后一个 ### 分组）；
+  // 收件箱目标：仍追加到末尾（收件箱是「无日期待办」的堆栈，新的在后）
+  let out, lineNo;
+  if (isCl) {
+    out = dst.lines.slice();
+    out.splice(0, 0, ...serializeBlock(node, node.indentStr || ''));
+    lineNo = 0;
+  } else {
+    ({ out, lineNo } = appendLines(dst.lines, node, ''));
+  }
+  await writeTasks(dstPath, dst.head, out);
+  return res(200, { ok: true, task: recordOf(targetKey, Object.assign({}, node, { lineNo })) });
 }
 
 // 新建子任务：插入到父任务块之后，缩进一级

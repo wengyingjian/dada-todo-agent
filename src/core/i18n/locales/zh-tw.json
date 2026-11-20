@@ -234,6 +234,7 @@
     "list": "清單",
     "listAuto": "按日期自動",
     "noThread": "這個任務還沒有委派過會話。先用 ✈ 按鈕委派給 T3 Code。",
+    "delegateTip": "委派給 T3 Code",
     "locMoveTip": "修改任務所在的清單 / 分組",
     "locListLbl": "清單",
     "locGroupLbl": "分組",

@@ -5,7 +5,7 @@ import {
   loadAll, loadChecklists, loadByList, loadByDate, getDetail,
   loadChecklistGroups, collectTags,
   createTask, createChecklistTask, updateTask, deleteTask, toggleTask, setChecklistStatus, createSubtask, listSubtasks,
-  moveChecklistTask, createChecklist, setChecklistArchived
+  moveChecklistTask, createChecklist, setChecklistArchived, moveTaskToList
 } from '../api/tasks.js';
 
 // ---------- 纯函数 ----------
@@ -66,6 +66,8 @@ const api = {
   async listSubtasks(parentGuid) { return (await unwrap(listSubtasks(parentGuid))).items || []; },
   async createSubtask(parentGuid, task) { return (await unwrap(createSubtask(parentGuid, task))).task; },
   async moveChecklistTask(listKey, guid, targetGroupTitle) { return await unwrap(moveChecklistTask(listKey, guid, targetGroupTitle)); },
+  // 任务跨清单移动（编辑弹窗改归属用）：targetKey 为 cl: 键或 INBOX_KEY
+  async moveTaskToList(guid, targetKey) { return (await unwrap(moveTaskToList(guid, targetKey))).task; },
   // 全库历史标签（按频次倒序）：编辑弹窗添加标签时的智能提示数据源（issue #22）
   async collectTags() { return await collectTags(); }
 };

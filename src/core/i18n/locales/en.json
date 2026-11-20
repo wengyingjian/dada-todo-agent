@@ -234,6 +234,7 @@
     "list": "List",
     "listAuto": "Auto (by date)",
     "noThread": "This task has no delegated session yet. Use the ✈ button to delegate it to T3 Code first.",
+    "delegateTip": "Delegate to T3 Code",
     "locMoveTip": "Change the list / group of this task",
     "locListLbl": "List",
     "locGroupLbl": "Group",

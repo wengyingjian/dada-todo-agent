@@ -4,8 +4,20 @@
       <button class="tk-close" @click="close"><i class="la la-times"></i></button>
       <div class="tk-modal-head">
         <h3 class="tk-modal-title">{{ editing ? $t('editor.editTitle') : $t('editor.newTitle') }}</h3>
+        <!-- agent 对话弹窗 / 打开会话 / 委派：lucide 图标与右侧会话卡片一致（messages-square / arrow-up-right） -->
+        <button v-if="editing" class="btn btn-icon" type="button" v-tooltip="$t('conversation.open')" @click="openConversation">
+          <span ref="convIco" class="tk-ico"></span>
+        </button>
+        <button v-if="editing" class="btn btn-icon" type="button" v-tooltip="$t('sessions.openSession')" @click="openSession">
+          <span ref="sessIco" class="tk-ico"></span>
+        </button>
+        <!-- 常驻委派按钮：无论是否已委派过都可再发一次新委派 -->
+        <button v-if="editing" class="btn btn-icon" type="button" v-tooltip="$t('editor.delegateTip')" @click="delegateTask">
+          <i class="la la-paper-plane"></i>
+        </button>
+        <!-- 打开任务所在的笔记：文件图标 -->
         <button v-if="editing" class="btn btn-icon" type="button" v-tooltip="$t('editor.openFileTip')" @click="openFile">
-          <i class="la la-external-link"></i>
+          <i class="la la-file-text-o"></i>
         </button>
       </div>
       <label class="tk-field">
@@ -53,6 +65,15 @@
           <i class="la la-plus"></i>
         </button>
       </div>
+      <!-- 清单归属：新建时选定落点（默认按日期自动），编辑时可改清单（跨文件整块移动）。
+           子任务随父任务整块移动，单独改归属会破坏层级，故只读展示。 -->
+      <label v-if="listOptions && listOptions.length" class="tk-field">
+        <span>{{ $t('editor.list') }}</span>
+        <select v-model="form.listKey" :disabled="saving || isSubtask">
+          <option value="">{{ $t('editor.listAuto') }}</option>
+          <option v-for="c in listOptions" :key="c.key" :value="c.key">{{ c.name }}</option>
+        </select>
+      </label>
       <label class="tk-field">
         <span>{{ $t('editor.desc') }}</span>
         <textarea v-model="form.description" rows="3" :placeholder="$t('editor.descPh')"></textarea>
@@ -161,9 +182,19 @@
 
 <script>
 import { Tasks } from '../composables/useTasks.js';
+import { taskFilePath } from '../api/tasks.js';
 import { splitSummary, composeSummary, sanitizeTag, isImeKey, PRIORITY_ICON, priorityToLevel, levelToPriorityEmoji, withAlpha, validHex } from '../composables/tasks-logic.js';
 import { LinkFormModal, ConfirmModal } from '../ui/modals.js';
 import { openTaskInFile } from '../utils/openTaskInFile.js';
+import { setIcon, Notice } from 'obsidian';
+import { ConversationModal } from '../../project/conversation-modal.js';
+import { sessionThreadIdOf } from '../../project/session-line.js';
+import { t3DeepLink, openExternal } from '../../project/runtime.js';
+import { startDelegation } from '../../project/delegate.js';
+import * as rt from '../../project/runtime.js';
+import { resolveEditorCwd } from '../../project/editor-grip.js';
+import DelegateModal from '../../project/DelegateModal.vue';
+import { VueModal } from '../ui/VueModal.js';
 import SubtaskList from './SubtaskList.vue';
 import TimePicker from './TimePicker.vue';
 import DatePicker from './DatePicker.vue';
@@ -185,7 +216,9 @@ export default {
     // 清单分组内新建：传入 { list, group } 时，新任务追加到该分组最后一行（而非文件末尾）
     createIn: { type: Object, default: null },
     // 四象限新建：预置优先级档位（high / medium / low / none），使新任务落入对应象限
-    defaultPriority: { type: String, default: '' }
+    defaultPriority: { type: String, default: '' },
+    // 清单列表（{ key, name }）：新建时选落点、编辑时改归属。宿主不传时自动加载
+    checklists: { type: Array, default: null }
   },
   data() {
     return {
@@ -201,11 +234,33 @@ export default {
       tagSugs: [],
       sugList: [],
       sugIdx: -1,
-      sugOpen: false
+      sugOpen: false,
+      // 清单下拉数据源：宿主未传 checklists 时自动加载
+      ownChecklists: [],
+      // 编辑模式打开时的清单归属（保存时对比，判断是否跨清单移动）
+      originalListKey: '',
+      // 委派子行（⚡ t3: 标记）里的会话 id：init 时异步取，取到前 agent 按钮按无会话处理
+      subThreadId: ''
     };
   },
   computed: {
     editing() { return !!(this.task && this.task.guid); },
+    // 编辑的是子任务（subtaskCount 字段只在顶层任务上有值，子任务记录缺省为 undefined）？
+    // 以 parentGuid 为准：子任务记录带 parentGuid，顶层任务为空串
+    isSubtask() { return !!(this.task && this.task.parentGuid); },
+    // 行尾 ⚡ t3: 绑定标记里的会话 id：先看任务自身行尾，再看委派子行（多个时取最后一个）。
+    // 无任何标记时 agent 按钮点击会提示先委派。
+    threadIdOf() {
+      const t = this.task;
+      if (!t) return '';
+      const own = t.t3Mark ? sessionThreadIdOf(t.t3Mark) : '';
+      if (own) return own;
+      return this.subThreadId;
+    },
+    // 清单下拉数据源：优先用宿主传入的列表（避免每次开弹窗重读盘）
+    listOptions() {
+      return Array.isArray(this.checklists) ? this.checklists : this.ownChecklists;
+    },
     // 时间形态三态（allday / single / range）中，是否全天
     isAllDay() { return this.form.timeMode === 'allday'; },
     // 时间选择器步长：取自插件设置（timeStep），取不到时默认 5（分钟）
@@ -230,7 +285,14 @@ export default {
     // immediate：VueModal 桥挂载时 open 已为 true，必须立即初始化预填表单
     open: { handler(v) { if (v) this.init(); }, immediate: true }
   },
+  // agent 按钮用 Obsidian 的 lucide setIcon 渲染，与右侧会话卡片图标同源同形
+  mounted() { this.renderIcons(); },
+  updated() { this.renderIcons(); },
   methods: {
+    renderIcons() {
+      if (this.$refs.convIco) setIcon(this.$refs.convIco, 'messages-square');
+      if (this.$refs.sessIco) setIcon(this.$refs.sessIco, 'arrow-up-right');
+    },
     blank() {
       return {
         guid: '', title: '', description: '', links: [], tags: [],
@@ -238,7 +300,9 @@ export default {
         timeMode: 'single', dueStart: this.defaultTime || '', dueEnd: '', startDate: '',
         scheduledDate: '',
         remind: true, completed: false, cancelled: false, cancelledAt: '',
-        priority: this.defaultPriority || 'none'
+        priority: this.defaultPriority || 'none',
+        // 清单归属：空串 = 按日期自动落日记 / 收件箱；createIn 指定清单时预选它
+        listKey: (this.createIn && this.createIn.list) || ''
       };
     },
     init() {
@@ -247,10 +311,31 @@ export default {
       this.linkEditIndex = -1;
       this.addingTag = false;
       this.tagDraft = '';
+      // 编辑模式下记住打开时的清单归属：保存时对比判断是否需要跨清单移动
+      this.originalListKey = this.editing
+        ? (String(this.task.guid || '').indexOf('cl:') === 0 ? String(this.task.guid).split('#')[0] : '')
+        : '';
       this.form = this.editing ? this.taskToForm(this.task) : this.blank();
+      // 宿主未传清单列表时自行加载（轻量，只扫清单文件）
+      if (!Array.isArray(this.checklists)) this.loadChecklists();
+      // 子任务行无 ⚡ 标记时，看它的委派子行（多个取最后一个，即最近一次委派）
+      this.subThreadId = '';
+      if (this.editing && !this.threadIdOf) this.loadSubThreadId();
       // 新建且未指定时间时，带出下一个准点/半点（结束=开始+30 分）
       this.ensureDefaultTimes();
       this.$nextTick(() => { if (this.$refs.sumInput) this.$refs.sumInput.focus(); });
+    },
+    // 异步取委派子行（⚡ t3: 标记）里的会话 id：listSubtasks 返回的子任务记录带 t3Mark
+    async loadSubThreadId() {
+      try {
+        const subs = await Tasks.listSubtasks(this.task.guid);
+        const marks = (subs || []).filter((s) => s.t3Mark).map((s) => sessionThreadIdOf(s.t3Mark)).filter(Boolean);
+        this.subThreadId = marks.length ? marks[marks.length - 1] : '';
+      } catch (e) { /* 读不到子任务时按无会话处理 */ }
+    },
+    async loadChecklists() {
+      try { this.ownChecklists = await Tasks.loadChecklists(); }
+      catch (e) { this.ownChecklists = []; }
     },
     // 标题只取纯文字，链接与标签拆成独立字段各自维护
     taskToForm(t) {
@@ -283,6 +368,8 @@ export default {
         description: t.description || '',
         links: parts.links.slice(),
         tags: parts.tags.slice(),
+        // 当前归属：guid 的 dateKey 是 cl: 键即清单；日记 / 收件箱显示为「按日期自动」
+        listKey: String(t.guid || '').indexOf('cl:') === 0 ? String(t.guid).split('#')[0] : '',
         dueDate, dueTime, timeMode, dueStart, dueEnd, startDate,
         scheduledDate: t.scheduledAt ? ymd(new Date(t.scheduledAt)) : '',
         remind: t.remind !== false,
@@ -408,7 +495,13 @@ export default {
           ? await Tasks.updateTask(this.form.guid, payload)
           : (this.createIn
               ? await Tasks.createChecklistTask(this.createIn.list, this.createIn.group, payload)
-              : await Tasks.createTask(payload));
+              : (this.form.listKey
+                  ? await Tasks.createChecklistTask(this.form.listKey, '', payload)
+                  : await Tasks.createTask(payload)));
+        // 编辑时改了清单归属：先保存内容，再把任务整块搬到目标清单（跨文件移动）
+        if (this.editing && this.form.listKey !== this.originalListKey) {
+          await Tasks.moveTaskToList(saved.guid, this.form.listKey || 'inbox');
+        }
         this.$emit('saved', saved);
         this.close();
       } catch (e) {
@@ -456,6 +549,63 @@ export default {
     async openFile() {
       await openTaskInFile(this.plugin, this.task);
       this.close();
+    },
+    /* ---------- agent 对话弹窗 / 打开 T3 会话 / 委派 ----------
+       会话侧边栏卡片的两枚按钮：查看对话内容走 ConversationModal，
+       跳转 T3 Code 会话走 t3code:// 深链。threadId 来自行尾 ⚡ t3: 绑定标记，
+       任务自身没有时回看委派子行（多个取最后一个）；都没有时提示先委派。
+       委派按钮常驻：点开 DelegateModal（与编辑器纸飞机同一组件）再发一次新委派。 */
+    openConversation() {
+      if (!this.plugin) return;
+      const threadId = this.threadIdOf;
+      if (!threadId) { new Notice(this.$t('editor.noThread')); return; }
+      new ConversationModal(this.plugin.app, this.plugin, {
+        threadId,
+        state: null,
+        cwd: ''
+      }).open();
+    },
+    openSession() {
+      const threadId = this.threadIdOf;
+      if (!threadId) { new Notice(this.$t('editor.noThread')); return; }
+      const url = t3DeepLink(threadId);
+      if (!url) { new Notice('找不到 T3 Code environment-id'); return; }
+      openExternal(url);
+    },
+    async delegateTask() {
+      if (!this.plugin) return;
+      // 任务记录可能不带 file 字段（如清单视图 loadChecklistGroups 未回传）：
+      // guid 的 dateKey 是 cl:<路径> 时直接还原文件路径；其余（日记 / 收件箱）走 taskFilePath 定位
+      const dateKey = String((this.task && this.task.guid) || '').split('#')[0];
+      const filePath = (this.task && this.task.file)
+        || (dateKey.indexOf('cl:') === 0 ? dateKey.slice(3) + '.md' : taskFilePath(dateKey))
+        || '';
+      if (!filePath) { new Notice('找不到任务所在文件，无法委派'); return; }
+      const node = { filePath };
+      // cwd 预填与编辑器纸飞机同规则：任务所在文件命中的项目节点 cwd（最深者优先），
+      // 未命中时回落到设置里的默认 cwd，再回落到库根
+      const nodes = rt.scanProjects(this.plugin).nodes || [];
+      const vaultRoot = this.plugin.app.vault.adapter.basePath;
+      const cwd = resolveEditorCwd(filePath, nodes, rt.projectSettings(this.plugin).projectDefaultCwd || vaultRoot);
+      new VueModal(this.plugin.app, DelegateModal, {
+        open: true,
+        prompt: this.form.title || '',
+        cwd,
+        onConfirm: async ({ prompt, cwd }) => {
+          if (!cwd) { new Notice('请先设置工作目录'); return; }
+          new Notice('已发送到 T3 Code，运行中…');
+          try {
+            await startDelegation(this.plugin, rt, {
+              node,
+              task: this.task,
+              prompt,
+              cwd
+            });
+          } catch (e) {
+            new Notice('委派失败：' + String(e.message || e));
+          }
+        }
+      }).open();
     },
     /* ---------- 链接（原生弹窗；index < 0 表示新增） ---------- */
     openLinkEditor(index) {

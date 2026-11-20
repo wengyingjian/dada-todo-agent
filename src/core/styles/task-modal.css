@@ -67,6 +67,9 @@
 /* 方形图标按钮（标题行用） */
 .btn-icon { flex: none; width: 30px; height: 30px; padding: 0; justify-content: center; }
 .btn-icon i { font-size: 14px; }
+/* lucide 图标（setIcon 渲染，与右侧会话卡片同款）：对齐 line-awesome 14px 的视觉尺寸 */
+.btn-icon .tk-ico { display: inline-flex; width: 16px; height: 16px; }
+.btn-icon .tk-ico svg { width: 16px; height: 16px; }
 
 /* ---------- 按钮族 ----------
    色彩纪律：金色 = 唯一主按钮；红色 = 仅用于删除的文字/图标（quiet-danger）；
