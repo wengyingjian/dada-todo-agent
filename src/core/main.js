@@ -9,7 +9,7 @@ import { setupHoverPreview, teardownHoverPreview } from './hoverPreview.js';
 import { DadaTodoSettingTab } from './ui/settings.js';
 import { ReminderService } from './services/reminder.js';
 import { mergeProjectSettings } from '../project/settings.js';
-import { syncOnce } from '../project/runtime.js';
+import { startReverseSync } from '../project/runtime.js';
 import { editorGripExtension } from '../project/editor-grip-ui.js';
 import { editorThreadLinkExtension } from '../project/editor-thread-link-ui.js';
 import { SessionsView, SESSIONS_VIEW_TYPE, SESSIONS_RIBBON_ICON } from '../project/sessions-view.js';
@@ -117,18 +117,13 @@ export default class DadaTodoPlugin extends Plugin {
     // [sessions] 右侧栏会话视图：待处理 / 进行中 / 已完成
     this.registerView(SESSIONS_VIEW_TYPE, (leaf) => new SessionsView(leaf, this));
 
-    // [project-view] T3 Code 反向同步：启动 8 秒后跑一次（等 Obsidian 索引就绪），之后按设置里的间隔（默认 60 秒）轮询。
-    // 定时器固定 15 秒一跳，到点才真正查询，这样用户在设置里改间隔无需重启插件。
-    let lastSyncAt = 0;
-    const syncTick = () => {
-      lastSyncAt = Date.now();
-      syncOnce(this).catch((e) => console.warn('[DadaAgent] 反向同步失败：', e));
-    };
-    this.registerInterval(window.setTimeout(syncTick, 8000));
-    this.registerInterval(window.setInterval(() => {
-      const every = Math.max(15, Number((this.settings.project || {}).reverseSyncSeconds) || 60) * 1000;
-      if (Date.now() - lastSyncAt >= every) syncTick();
-    }, 15 * 1000));
+    // [project-view] T3 Code 反向同步：由中央会话源（thread-hub）的快照广播驱动——
+    // WAL 变化或 20s 兜底轮询产生新快照时跑一轮 syncOnce（内部有 reverseSync 开关与
+    // reverseSyncMinMinutes 静默门槛，写清单节奏不受快照频率影响）。
+    // 启动 8 秒后订阅（等 Obsidian 索引就绪）。
+    this.registerInterval(window.setTimeout(() => {
+      startReverseSync(this);
+    }, 8000));
 
     this.addRibbonIcon(ribbonIcon, t('app.openDada'), () => this.activateView());
 

@@ -17,6 +17,8 @@ import { groupOfState, ensureGroupHeadings, groupOfLine, isTaskLine, groupBlockL
 import { locateSessionLine, rewriteSessionLine, stripSessionMark } from './session-line.js';
 
 import { queryThreads, threadTitleOf, taskDateMeta, classifyWorkspace, unboundTarget, cwdInList } from './reverse-sync.js';
+import { isT3DbFile } from './session-groups.js';
+import { createThreadHub } from './thread-hub.js';
 import { summarize, summarizeThread } from './delegate.js';
 import { shouldResummarize } from './summarize-llm.js';
 import { replaceSummaryInLines, locateDelegationLine } from './summarize-apply.js';
@@ -27,6 +29,48 @@ export { DEFAULT_SETTINGS };
 
 export function projectSettings(plugin) {
   return mergeProjectSettings(plugin.settings && plugin.settings.project);
+}
+
+// ---------- 中央会话源（thread-hub） ----------
+// 侧栏会话视图与反向同步共用同一份查询：一处 fs.watch（WAL 防抖）+ 一处兜底轮询，
+// 订阅即拿快照。反向同步不再自己定时 fork sqlite3，改为「快照到达就跑一轮 syncOnce」。
+let _threadHub = null;
+
+function threadHub(plugin) {
+  if (_threadHub) return _threadHub;
+  const db = t3DbPath();
+  _threadHub = createThreadHub({
+    dbDir: db ? path.dirname(db) : '',
+    isDbFile: isT3DbFile,
+    query: () => queryThreads(db, 0),
+    watchDir: (dir, onEvent) => fs.watch(dir, { persistent: false }, onEvent),
+    setInterval: (fn, ms) => plugin.registerInterval(window.setInterval(fn, ms)),
+    clearInterval: (id) => window.clearInterval(id),
+    debounceMs: 400,
+    fallbackMs: 20000
+  });
+  return _threadHub;
+}
+
+// 侧栏等只读订阅方：注册回调并立即拿当前快照；首个订阅者触发 hub 启动
+export function subscribeThreads(plugin, fn) {
+  return threadHub(plugin).subscribe(fn);
+}
+
+export function threadSnapshot() {
+  return _threadHub ? _threadHub.snapshot() : [];
+}
+
+// 手动刷新入口（侧栏刷新按钮）：立即触发一次防抖重查
+export function requestThreadRefresh() {
+  if (_threadHub) _threadHub.requestRefresh();
+}
+
+// 反向同步由快照驱动：hub 广播 → syncOnce（内部有静默门槛与 reverseSync 开关）
+export function startReverseSync(plugin) {
+  threadHub(plugin).subscribe(() => {
+    syncOnce(plugin).catch((e) => console.warn('[DadaAgent] 反向同步失败：', e));
+  });
 }
 
 // 清单文件夹（= 项目所在文件夹）。旧 projectsRoot 设置不再生效，统一跟随 checklistFolder。

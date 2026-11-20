@@ -1,12 +1,10 @@
 // 右侧栏「会话」视图：T3 Code 会话按待处理 / 进行中 / 已完成三段展示。
 // 卡片 DOM 与样式原样取自 obsidian-agent-deck 的 sessionCard（Apache-2.0），
 // 只把数据源换成 dada-todo-agent 自己的 T3 只读查询。
-import fs from 'node:fs';
-import path from 'node:path';
 import { ItemView, Menu, Notice, setIcon } from 'obsidian';
 import * as rt from './runtime.js';
 import { queryThreads, threadTitleOf } from './reverse-sync.js';
-import { groupSessions, isT3DbFile, stateChipOf, timeAgoParts, workspaceLabel } from './session-groups.js';
+import { groupSessions, stateChipOf, timeAgoParts, workspaceLabel } from './session-groups.js';
 import { computeTodayStats, fmtMin, weekComparison } from './session-stats.js';
 import { searchMatches, filterByProject } from './session-search.js';
 import { lattice } from './lattice.js';
@@ -17,12 +15,10 @@ import { t } from '../core/i18n/index.js';
 export const SESSIONS_VIEW_TYPE = 'dada-todo-agent-sessions-view';
 export const SESSIONS_RIBBON_ICON = 'messages-square';
 
-// AgentDeck 里 T3 Code 的配色（constants.js: t3code）
-const AGENT_COLOR = '#6f8ab8';
-const AGENT_SOFT = 'rgba(111,138,184,.13)';
-// WAL 写入后 400ms 防抖刷新；20 秒轮询只做兜底（与 AgentDeck 的 pollSeconds 默认值一致）
+// 侧栏刷新：走 thread-hub 中央会话源（WAL 监听 + 20s 兜底 + 手动刷新），
+// 不再自己 fs.watch / setInterval——与反向同步共享同一份查询结果。
 const REFRESH_MS = 20 * 1000;
-const DB_WATCH_DEBOUNCE_MS = 400;
+void REFRESH_MS;
 
 const STATE_ICONS = {
   awaiting: 'hand',
@@ -44,9 +40,7 @@ export class SessionsView extends ItemView {
     this.plugin = plugin;
     this.threads = [];
     this._loading = false;
-    this._timer = null;
-    this._watcher = null;
-    this._watchTimer = null;
+    this._unsub = null; // thread-hub 订阅退订句柄
     this.search = '';
     this._composing = false;
     this.selectedCwd = null; // 项目时间轴点击筛选：null = 全部
@@ -59,56 +53,32 @@ export class SessionsView extends ItemView {
   async onOpen() {
     this.contentEl.classList.add('dada-sessions');
     this.addAction('refresh-cw', t('sessions.refresh'), () => this.refresh());
+    // 订阅中央会话源：快照到达即渲染（hub 内部有 WAL 防抖与 20s 兜底）
+    this._unsub = rt.subscribeThreads((threads) => {
+      this.threads = threads;
+      this._loading = false;
+      this.render();
+    });
     await this.refresh();
-    this.startDbWatch();
-    this._timer = window.setInterval(() => {
-      if (this.containerEl && this.containerEl.isShown && !this.containerEl.isShown()) return;
-      this.refresh();
-    }, REFRESH_MS);
   }
 
   async onClose() {
-    if (this._timer) { window.clearInterval(this._timer); this._timer = null; }
-    this.stopDbWatch();
+    if (this._unsub) { this._unsub(); this._unsub = null; }
   }
 
-  // T3 用 WAL 写库，会话状态一变 -wal 就会更新；监听目录比定时全量查询更快，
-  // 也不会在空闲时反复 fork sqlite3。
-  startDbWatch() {
-    this.stopDbWatch();
-    const db = rt.t3DbPath();
-    if (!db) return;
-    try {
-      this._watcher = fs.watch(path.dirname(db), { persistent: false }, (_event, name) => {
-        if (name && !isT3DbFile(name)) return;
-        if (this._watchTimer) window.clearTimeout(this._watchTimer);
-        this._watchTimer = window.setTimeout(() => {
-          this._watchTimer = null;
-          this.refresh();
-        }, DB_WATCH_DEBOUNCE_MS);
-      });
-      this._watcher.on?.('error', () => this.stopDbWatch());
-    } catch {
-      this._watcher = null;
-    }
-  }
-
-  stopDbWatch() {
-    if (this._watchTimer) { window.clearTimeout(this._watchTimer); this._watchTimer = null; }
-    try { this._watcher?.close(); } catch { /* 已关闭 */ }
-    this._watcher = null;
-  }
-
+  // 手动刷新：触发 hub 立即重查（防抖合并后执行）
   async refresh() {
     if (this._loading) return;
     this._loading = true;
-    try {
-      const db = rt.t3DbPath();
-      this.threads = db ? await queryThreads(db, 0).catch(() => []) : [];
-    } finally {
-      this._loading = false;
-      this.render();
-    }
+    rt.requestThreadRefresh();
+    // hub 广播回调里会置 _loading=false 并 render；若 hub 不可用则兜底直查
+    setTimeout(() => {
+      if (this._loading) {
+        this._loading = false;
+        const db = rt.t3DbPath();
+        queryThreads(db, 0).then((t) => { this.threads = t; this.render(); }).catch(() => {});
+      }
+    }, 1200);
   }
 
 
