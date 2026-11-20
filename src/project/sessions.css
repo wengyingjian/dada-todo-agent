@@ -368,3 +368,259 @@
     animation-duration: 1400ms !important;
   }
 }
+
+/* ===== 顶部栏 + 摘要面板 + 项目时间轴 =====
+   声明取自 obsidian-agent-deck styles.css 的 .ad-head / .ad-search / .ad-iconbtn /
+   .ad-hero / .ad-num / .ad-day 段（Apache-2.0），根选择器换成 .dada-sessions、
+   类名换 dada- 前缀；时间轴行是合并版（项目名 + lane + 时长），行样式取自 .ad-proj。 */
+.dada-sessions .dada-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 2px 8px;
+}
+.dada-sessions .dada-head .dada-search {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+}
+.dada-sessions .dada-head .dada-search:focus-within {
+  border-color: var(--ad-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ad-accent) 16%, transparent);
+}
+.dada-sessions .dada-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--ad-line);
+  border-radius: 9px;
+  padding: 0 9px;
+  background: var(--background-primary);
+  min-width: 160px;
+}
+.dada-sessions .dada-search .dada-search__icon {
+  color: var(--ad-faint);
+  font-size: 13px;
+}
+.dada-sessions .dada-search .dada-search__icon svg {
+  width: 13px;
+  height: 13px;
+}
+.dada-sessions .dada-search .dada-search__input {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 6px 0;
+  font-size: 12px;
+  width: 100%;
+  color: var(--ad-ink);
+}
+.dada-sessions .dada-search .dada-search__input:focus {
+  box-shadow: none;
+}
+.dada-sessions .dada-head__actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+.dada-sessions .dada-iconbtn {
+  appearance: none;
+  border: 1px solid var(--ad-line);
+  background: var(--background-primary);
+  box-shadow: none;
+  border-radius: 9px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--ad-muted);
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    transform .16s ease,
+    background .16s ease,
+    color .16s ease;
+}
+.dada-sessions .dada-iconbtn:hover {
+  transform: translateY(-1px);
+  background: var(--background-modifier-hover);
+  color: var(--ad-ink);
+}
+.dada-sessions .dada-iconbtn svg {
+  width: 14px !important;
+  height: 14px !important;
+}
+.dada-sessions .dada-iconbtn__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.dada-sessions .dada-hero {
+  position: relative;
+  border: 1px solid var(--ad-line);
+  border-radius: 18px;
+  padding: 14px 14px 12px;
+  margin-top: 4px;
+  background:
+    radial-gradient(
+      120% 90% at 0% 0%,
+      rgba(139, 132, 168, .10),
+      transparent 55%),
+    radial-gradient(
+      100% 90% at 100% 0%,
+      rgba(176, 155, 140, .08),
+      transparent 55%),
+    var(--ad-surface);
+  overflow: hidden;
+}
+.dada-sessions .dada-hero::after {
+  content: "";
+  position: absolute;
+  inset: -60% -30% auto auto;
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  background:
+    radial-gradient(
+      circle,
+      rgba(139, 132, 168, .14),
+      transparent 65%);
+  filter: blur(22px);
+  pointer-events: none;
+}
+.theme-light .dada-sessions .dada-hero {
+  background:
+    radial-gradient(
+      120% 90% at 0% 0%,
+      rgba(139, 132, 168, .07),
+      transparent 55%),
+    radial-gradient(
+      100% 90% at 100% 0%,
+      rgba(176, 155, 140, .06),
+      transparent 55%),
+    var(--background-secondary);
+}
+.dada-sessions .dada-hero__hint {
+  font-size: 10px;
+  color: var(--ad-faint);
+  margin-top: 10px;
+}
+.dada-sessions .dada-hero__nums {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+.dada-sessions .dada-num {
+  min-width: 0;
+}
+.dada-sessions .dada-num__v {
+  font-size: 25px;
+  font-weight: 760;
+  letter-spacing: -.03em;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+.dada-sessions .dada-num__l {
+  font-size: 10px;
+  color: var(--ad-muted);
+  margin-top: 2px;
+}
+.dada-sessions .dada-num__sub {
+  font-size: 10px;
+  color: var(--ad-faint);
+  margin-top: 1px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dada-sessions .dada-day {
+  position: relative;
+  margin-top: 12px;
+  padding-top: 2px;
+  /* 三列共享网格：项目名 | lane 列 | 时长列。行、现在竖线、刻度都对齐到中间列。 */
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(44px, 2fr) auto;
+  gap: 3px 8px;
+}
+/* 行内三格对齐到 .dada-day 的共享列轨道（subgrid）；不支持时退回同款本地三列 */
+.dada-sessions .dada-day__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(44px, 2fr) auto;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
+  align-items: center;
+  font-size: 11px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.dada-sessions .dada-day__row:hover {
+  background: var(--background-modifier-hover);
+}
+.dada-sessions .dada-day__row.is-selected {
+  background: color-mix(in srgb, var(--ad-accent) 14%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--ad-accent) 35%, transparent);
+}
+.dada-sessions .dada-day__name {
+  color: var(--ad-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dada-sessions .dada-day__lane {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--background-modifier-hover);
+  overflow: hidden;
+}
+.dada-sessions .dada-day__seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+  opacity: .85;
+  background: var(--ad-accent);
+}
+.dada-sessions .dada-day__min {
+  color: var(--ad-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  min-width: 4.2em;
+  text-align: right;
+}
+.dada-sessions .dada-day__now {
+  position: relative;
+  grid-column: 2;
+  pointer-events: none;
+}
+.dada-sessions .dada-day__nowline {
+  position: absolute;
+  /* 只覆盖 lane 的高度：行高约 14px、lane 8px 居中，上下各缩 3px，避免在 lane 上下缘露头 */
+  top: 3px;
+  bottom: 3px;
+  width: 1.5px;
+  transform: translateX(-50%);
+  background: var(--ad-ink);
+  opacity: .45;
+  border-radius: 1px;
+}
+.dada-sessions .dada-day__ticks {
+  grid-column: 2;
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--ad-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 340px) {
+  .dada-sessions .dada-hero__nums .dada-num__v {
+    font-size: 21px;
+  }
+}
