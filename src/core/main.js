@@ -185,6 +185,35 @@ export default class DadaTodoPlugin extends Plugin {
 
     // [project-view] 编辑器会话标记：`⚡ t3:<id>` 变成可点链接（hint「打开 T3 Code 会话」）
     this.registerEditorExtension(editorThreadLinkExtension());
+
+    // 清单自动归档：开关开启时，等 vault 与界面就绪后在空闲时机异步跑一轮。
+    // 不阻塞 onload；requestIdleCallback 不可用时退到 15s 定时（与反向同步首跑错开）。
+    this.registerAutoArchive();
+  }
+
+  /**
+   * 清单自动归档（设置 autoArchive.enabled）：vault 就绪后空闲时异步跑一轮。
+   * 逐文件 await，任一文件失败不中断其余；全程不打日志除非出错（避免启动刷屏）。
+   */
+  registerAutoArchive() {
+    const run = () => {
+      // 设置即时生效：跑的时候读最新值
+      const a = (this.settings && this.settings.autoArchive) || {};
+      if (!a.enabled) return;
+      import('./api/tasks.js').then(({ autoArchiveAllLists }) =>
+        autoArchiveAllLists(this, { threshold: a.threshold, keep: a.keep })
+          .catch((e) => console.warn('[DadaTodo] 自动归档失败：', e))
+      );
+    };
+    // 等 Obsidian 布局就绪（metadataCache / 文件树可用），再让出主线程
+    this.app.workspace.onLayoutReady(() => {
+      if (typeof window.requestIdleCallback === 'function') {
+        const id = window.requestIdleCallback(run, { timeout: 30000 });
+        this.register(() => window.cancelIdleCallback && window.cancelIdleCallback(id));
+      } else {
+        this.registerInterval(window.setTimeout(run, 15000));
+      }
+    });
   }
 
   /** 监听 Obsidian 明暗主题切换，自动重算依赖主题的配色（紫罗兰 dark/light 变体等） */
@@ -309,6 +338,16 @@ export default class DadaTodoPlugin extends Plugin {
       snapMinutes: [5, 10, 15, 30].includes(Number(data.snapMinutes)) ? Number(data.snapMinutes) : 30,
       // 计划时间（⏳ scheduled）：默认关闭；开启后编辑弹窗可设置计划日期，各视图显示计划日期徽标
       showScheduled: data.showScheduled === true,
+      // 清单自动归档：启动时异步执行（不阻塞加载）。已完成 > 阈值触发，归最早 N 条留最近 N 条，
+      // 24h 内改过的文件跳过。规则细节见 docs/ideas/file-io-unification.md
+      autoArchive: (() => {
+        const a = data.autoArchive && typeof data.autoArchive === 'object' ? data.autoArchive : {};
+        return {
+          enabled: a.enabled === true,
+          threshold: Math.max(2, Math.round(Number(a.threshold) || 100)),
+          keep: Math.max(1, Math.round(Number(a.keep) || 50))
+        };
+      })(),
       // 视图菜单：完整视图顺序（含隐藏项，保持其排序记忆）；默认全部按当前顺序
       menuViews: normalizeMenuViews(data.menuViews),
       // 视图菜单：隐藏的视图 key（不显示在菜单上，但保留排序，可随时在设置页重新勾选显示）

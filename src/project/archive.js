@@ -3,6 +3,12 @@
 
 export const ARCHIVE_LIMIT = 100;
 const ARCHIVE_RE = /^task-(\d{4}-\d{2}-\d{2})(?:~(\d{4}-\d{2}-\d{2}))?\.md$/;
+// 自动归档的自定义前缀识别：核心 autoArchiveList 可传 archivePrefix（默认 'task-'）。
+// 前缀需转义（用户可配任意字面量），日期段与区间语义不变。
+export function archiveNameRegex(prefix = 'task-') {
+  const esc = String(prefix || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${esc}(\\d{4}-\\d{2}-\\d{2})(?:~(\\d{4}-\\d{2}-\\d{2}))?\\.md$`);
+}
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const iso = (d) => (DATE_RE.test(String(d || '')) ? String(d) : '');
 
@@ -15,11 +21,12 @@ export function parseArchiveName(name) {
   return m ? { start: m[1], end: m[2] || m[1] } : null;
 }
 
-export function archiveFileName(dates) {
+export function archiveFileName(dates, prefix = 'task-') {
   const ds = (dates || []).map(iso).filter(Boolean).sort();
   const start = ds[0] || '1970-01-01';
   const end = ds[ds.length - 1] || start;
-  return start === end ? `task-${start}.md` : `task-${start}~${end}.md`;
+  const p = String(prefix == null || prefix === '' ? 'task-' : prefix);
+  return start === end ? `${p}${start}.md` : `${p}${start}~${end}.md`;
 }
 
 // 已有区间文件纳入新任务日期后，可能扩宽；不改变文件内容，只算新文件名
@@ -45,16 +52,18 @@ export function countTopLevelTasks(lines) {
 
 // files: [{ path, lines }]（同目录下的文件与内容）
 // dates: 本批要归档任务的日期（YYYY-MM-DD）
+// prefix: 归档文件名前缀（默认 'task-'；核心 autoArchiveList 可自定义）
 // 返回 { path, create }：create=true 表示需要新建
-export function pickArchiveFile(files, dates, dirHint = '') {
+export function pickArchiveFile(files, dates, dirHint = '', prefix = 'task-') {
   const dir = dirHint || (files.length ? String(files[0].path).split('/').slice(0, -1).join('/') : '');
+  const re = prefix === 'task-' ? ARCHIVE_RE : archiveNameRegex(prefix);
   const cur = files
-    .filter((f) => isArchiveFile(f.path))
+    .filter((f) => re.test(String(f.path).split('/').pop()))
     .sort((a, b) => String(a.path).localeCompare(String(b.path)))
     .pop();
   if (cur && countTopLevelTasks(cur.lines) < ARCHIVE_LIMIT) {
     return { path: cur.path, create: false };
   }
-  const name = archiveFileName(dates);
+  const name = archiveFileName(dates, prefix);
   return { path: dir ? `${dir}/${name}` : name, create: true };
 }

@@ -621,6 +621,39 @@ export class DadaTodoSettingTab extends PluginSettingTab {
       }),
     ]);
 
+    // 分组：清单自动归档（启动时异步跑；已完成 > 阈值触发，归最早 N 条留最近 N 条）
+    const aaGroup = group('groupAutoArchive', [
+      row('autoArchiveEnabled', 'autoArchiveEnabledDesc', (s) => {
+        s.addToggle((tg) => {
+          tg.setValue((plugin.settings.autoArchive || {}).enabled === true); // 默认关（避免更新后突然搬动用户任务）
+          tg.onChange(async (v) => {
+            plugin.settings.autoArchive.enabled = v === true;
+            await plugin.saveSettings();
+          });
+        });
+      }),
+      row('autoArchiveThreshold', 'autoArchiveThresholdDesc', (s) => {
+        s.addText((tx) => {
+          tx.inputEl.type = 'number';
+          tx.setValue(String(plugin.settings.autoArchive.threshold));
+          tx.onChange(async (v) => {
+            plugin.settings.autoArchive.threshold = Math.max(2, Math.round(Number(v) || 100));
+            await plugin.saveSettings();
+          });
+        });
+      }),
+      row('autoArchiveKeep', 'autoArchiveKeepDesc', (s) => {
+        s.addText((tx) => {
+          tx.inputEl.type = 'number';
+          tx.setValue(String(plugin.settings.autoArchive.keep));
+          tx.onChange(async (v) => {
+            plugin.settings.autoArchive.keep = Math.max(1, Math.round(Number(v) || 50));
+            await plugin.saveSettings();
+          });
+        });
+      }),
+    ]);
+
     // 分组：关于（软件信息 / 作者 / 反馈渠道）
     const GH_REPO = 'https://github.com/Plover-PY/obsidian-DadaTodoList';
     const GH_ISSUES = GH_REPO + '/issues';

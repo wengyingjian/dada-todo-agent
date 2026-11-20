@@ -428,13 +428,28 @@
     "title": "會話",
     "open": "開啟會話側邊欄",
     "refresh": "重新整理",
-    "groups": { "wait": "待處理", "run": "進行中", "done": "已完成" },
-    "states": { "live": "在跑", "wait": "等你", "done": "完成", "error": "出錯", "cancelled": "已取消" },
+    "groups": {
+      "wait": "待處理",
+      "run": "進行中",
+      "done": "已完成"
+    },
+    "states": {
+      "live": "在跑",
+      "wait": "等你",
+      "done": "完成",
+      "error": "出錯",
+      "cancelled": "已取消"
+    },
     "count": "{{n}} 個",
     "prompts": "{{n}} 條提問",
     "workspace": "工作區",
     "sessionWorkspace": "會話工作區",
-    "ago": { "now": "剛剛", "min": "{{n}} 分鐘前", "hour": "{{n}} 小時前", "day": "{{n}} 天前" },
+    "ago": {
+      "now": "剛剛",
+      "min": "{{n}} 分鐘前",
+      "hour": "{{n}} 小時前",
+      "day": "{{n}} 天前"
+    },
     "empty": "還沒有 T3 會話",
     "openSession": "開啟會話",
     "noDeepLink": "找不到 T3 Code environment-id",
@@ -453,7 +468,10 @@
       "prompts": "{{n}} 次提問",
       "noSessions": "今天還沒有會話"
     },
-    "timeline": { "now": "現在", "todayTotal": "今天 {{time}}" }
+    "timeline": {
+      "now": "現在",
+      "todayTotal": "今天 {{time}}"
+    }
   },
   "conversation": {
     "title": "對話",
@@ -499,5 +517,12 @@
     "revoked": "已撤銷授權",
     "failed": "授權沒有完成，請重試（詳細原因見主控台）。",
     "openFailed": "沒能開啟瀏覽器，請檢查系統預設瀏覽器"
-  }
+  },
+  "groupAutoArchive": "清單自動歸檔",
+  "autoArchiveEnabled": "啟動時自動歸檔",
+  "autoArchiveEnabledDesc": "啟動後空閒時在背景執行（不阻塞 Obsidian）。清單內已完成任務超過閾值時，把最早的一批搬進同目錄歸檔檔案；24 小時內改過的檔案不動。",
+  "autoArchiveThreshold": "觸發閾值（已完成條數）",
+  "autoArchiveThresholdDesc": "檔案內已完成任務超過該數量才觸發歸檔，預設 100。",
+  "autoArchiveKeep": "保留最近已完成條數",
+  "autoArchiveKeepDesc": "觸發時保留最近 N 條已完成在原檔案（預設 50，近期可能還要查看），其餘更早的歸檔。"
 }

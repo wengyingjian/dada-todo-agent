@@ -434,13 +434,28 @@
     "title": "会话",
     "open": "打开会话侧边栏",
     "refresh": "刷新",
-    "groups": { "wait": "待处理", "run": "进行中", "done": "已完成" },
-    "states": { "live": "在跑", "wait": "等你", "done": "完成", "error": "出错", "cancelled": "已取消" },
+    "groups": {
+      "wait": "待处理",
+      "run": "进行中",
+      "done": "已完成"
+    },
+    "states": {
+      "live": "在跑",
+      "wait": "等你",
+      "done": "完成",
+      "error": "出错",
+      "cancelled": "已取消"
+    },
     "count": "{{n}} 个",
     "prompts": "{{n}} 条提问",
     "workspace": "工作区",
     "sessionWorkspace": "会话工作区",
-    "ago": { "now": "刚刚", "min": "{{n}} 分钟前", "hour": "{{n}} 小时前", "day": "{{n}} 天前" },
+    "ago": {
+      "now": "刚刚",
+      "min": "{{n}} 分钟前",
+      "hour": "{{n}} 小时前",
+      "day": "{{n}} 天前"
+    },
     "empty": "还没有 T3 会话",
     "openSession": "打开会话",
     "noDeepLink": "找不到 T3 Code environment-id",
@@ -459,7 +474,10 @@
       "prompts": "{{n}} 次提问",
       "noSessions": "今天还没有会话"
     },
-    "timeline": { "now": "现在", "todayTotal": "今天 {{time}}" }
+    "timeline": {
+      "now": "现在",
+      "todayTotal": "今天 {{time}}"
+    }
   },
   "conversation": {
     "title": "对话",
@@ -505,5 +523,12 @@
     "revoked": "已撤销授权",
     "failed": "授权没有完成，请重试（详细原因见控制台）。",
     "openFailed": "没能打开浏览器，请检查系统默认浏览器"
-  }
+  },
+  "groupAutoArchive": "清单自动归档",
+  "autoArchiveEnabled": "启动时自动归档",
+  "autoArchiveEnabledDesc": "启动后空闲时在后台执行（不阻塞 Obsidian）。清单内已完成任务超过阈值时，把最早的一批搬进同目录归档文件；24 小时内改过的文件不动。",
+  "autoArchiveThreshold": "触发阈值（已完成条数）",
+  "autoArchiveThresholdDesc": "文件内已完成任务超过该数量才触发归档，默认 100。",
+  "autoArchiveKeep": "保留最近已完成条数",
+  "autoArchiveKeepDesc": "触发时保留最近 N 条已完成在原文件（默认 50，近期可能还要查看），其余更早的归档。"
 }

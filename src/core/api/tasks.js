@@ -15,6 +15,7 @@ import {
 import {
   ARCHIVED_TAG, checklistNameError, frontmatterTags, yamlScalar
 } from '../composables/checklist-meta.js';
+import { pickArchiveFile, archiveNameRegex } from '../../project/archive.js';
 
 let plugin = null;
 export function initTasksApi(p) { plugin = p; }
@@ -724,6 +725,107 @@ export async function listSubtasks(parentGuid) {
   if (!node) return res(404, { ok: false, reason: 'not_found' });
   const items = node.children.map((c) => recordOf(g.dateKey, c, { parentGuid, file: g.file }));
   return res(200, { ok: true, count: items.length, items });
+}
+
+// ---------- 清单自动归档 ----------
+// 规则（docs/ideas/file-io-unification.md）：文件内「已完成」任务数超过阈值（默认 100）时，
+// 把最早的 N 条（默认 50）已完成任务整块搬到归档文件，保留最近的阈值内已完成供近期查看；
+// 24 小时内被修改过的文件强制跳过（刚在编辑的任务不动）。
+// 归档文件：清单目录下沿用 archive.js 的区间命名（task-<起>~<止>.md，前缀可由 opts 覆盖）。
+// 纯逻辑行处理 + 行级原语落盘，project 文件（task-*.md 也是清单）与普通清单共用。
+
+// 从正文行中收集「已完成顶层任务块」：返回 [{ start, end }]（块含子任务与描述行）。
+// 与 project 层 taskBlocks 同口径：块边界是「下一个任意顶层任务行」（含未完成 / 取消），
+// 否则夹在两个已完成任务之间的未完成任务会被错误卷进前一个块一起归档。
+function completedBlocks(lines) {
+  const starts = [];
+  (lines || []).forEach((line, i) => {
+    if (/^- \[[xX]\]/.test(line)) starts.push(i);
+  });
+  const bounds = [];
+  (lines || []).forEach((line, i) => {
+    if (/^- \[[ xX/-]\]/.test(line)) bounds.push(i);
+  });
+  return starts.map((start) => {
+    const next = bounds.find((b) => b > start);
+    return { start, end: next == null ? (lines || []).length : next };
+  });
+}
+
+// 自动归档单个清单文件。opts:
+//   threshold（默认 100）— 已完成数超过该值才触发
+//   keep（默认 50）— 保留最近 N 条已完成，其余（最早的）归档
+//   minFileAgeMs（默认 24h）— 文件 24h 内被修改过则整体跳过
+//   archivePrefix（默认 'task-'）— 归档文件名前缀
+// 返回 { ok, triggered, moved, archivePath?, reason? }
+export async function autoArchiveList(path, opts = {}) {
+  const threshold = Number.isFinite(opts.threshold) ? opts.threshold : 100;
+  const keep = Number.isFinite(opts.keep) ? opts.keep : 50;
+  const minAgeMs = Number.isFinite(opts.minFileAgeMs) ? opts.minFileAgeMs : 24 * 3600 * 1000;
+  const prefix = String(opts.archivePrefix != null ? opts.archivePrefix : 'task-');
+  const f = vault().getAbstractFileByPath(path);
+  if (!(f instanceof TFile)) return { ok: false, triggered: false, moved: 0, reason: 'not_found' };
+  // 24 小时内改过的文件不碰：mtime 走 adapter（vault 只读不写不产生缓存干扰）
+  try {
+    const stat = await vault().adapter.stat(f.path);
+    if (stat && stat.mtime && (Date.now() - stat.mtime) < minAgeMs) {
+      return { ok: true, triggered: false, moved: 0, reason: 'recently_modified' };
+    }
+  } catch { /* stat 失败照常继续（以内容为准） */ }
+
+  const doc = await readListDoc(path);
+  if (!doc) return { ok: false, triggered: false, moved: 0, reason: 'not_found' };
+  const blocks = completedBlocks(doc.lines);
+  if (blocks.length <= threshold) return { ok: true, triggered: false, moved: 0 };
+  // 触发：最早到「已完成数 - keep」的块归档，保住最近的 keep 条
+  const toMove = blocks.slice(0, blocks.length - keep);
+  if (!toMove.length) return { ok: true, triggered: false, moved: 0 };
+
+  const movedLines = [];
+  const removed = new Set();
+  for (const b of toMove) {
+    for (let i = b.start; i < b.end; i++) { movedLines.push(doc.lines[i]); removed.add(i); }
+  }
+  const kept = doc.lines.filter((_, i) => !removed.has(i));
+
+  // 归档文件名：从搬入行抽日期扩宽现有区间（复用 project/archive.js 的纯逻辑，同目录就近）
+  const dates = movedLines.flatMap((l) => l.match(/\d{4}-\d{2}-\d{2}/g) || []);
+  if (!dates.length) dates.push(new Date().toISOString().slice(0, 10));
+  const dir = path.split('/').slice(0, -1).join('/');
+  const re = archiveNameRegex(prefix);
+  const siblings = [];
+  for (const c of vault().getMarkdownFiles()) {
+    if (c.parent && c.parent.path === dir && c.path !== path && re.test(c.name)) {
+      const sib = await readListDoc(c.path);
+      if (sib) siblings.push({ path: c.path, lines: sib.lines });
+    }
+  }
+  const pick = pickArchiveFile(siblings, dates, dir, prefix);
+  const archiveDoc = await readListDoc(pick.path);
+  if (archiveDoc) {
+    await writeListDoc(pick.path, archiveDoc.head, [...archiveDoc.lines, ...movedLines, '']);
+  } else {
+    await createListFile(pick.path, {}, movedLines);
+  }
+  await writeListDoc(path, doc.head, kept);
+  return { ok: true, triggered: true, moved: toMove.length, archivePath: pick.path };
+}
+
+// 全库自动归档：枚举全部清单文件（含项目文件 task-*.md，frontmatter 有清单标记即算）
+// 逐个跑 autoArchiveList。启动空闲时机调用，逐文件 await 保持低峰值；单文件失败不中断。
+// 返回 { scanned, triggered, moved }（供调试 / 后续设置页展示）。
+export async function autoArchiveAllLists(pluginRef, opts = {}) {
+  let scanned = 0, triggered = 0, moved = 0;
+  for (const e of checklistFileEntries()) {
+    scanned += 1;
+    try {
+      const r = await autoArchiveList(e.path, opts);
+      if (r.triggered) { triggered += 1; moved += r.moved || 0; }
+    } catch (err) {
+      console.warn('[DadaTodo] 自动归档单文件失败：', e.path, err);
+    }
+  }
+  return { scanned, triggered, moved };
 }
 
 // ---------- 写 ----------

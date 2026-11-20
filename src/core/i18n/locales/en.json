@@ -434,13 +434,28 @@
     "title": "Sessions",
     "open": "Open sessions sidebar",
     "refresh": "Refresh",
-    "groups": { "wait": "Pending", "run": "In progress", "done": "Completed" },
-    "states": { "live": "Running", "wait": "Waiting", "done": "Done", "error": "Error", "cancelled": "Cancelled" },
+    "groups": {
+      "wait": "Pending",
+      "run": "In progress",
+      "done": "Completed"
+    },
+    "states": {
+      "live": "Running",
+      "wait": "Waiting",
+      "done": "Done",
+      "error": "Error",
+      "cancelled": "Cancelled"
+    },
     "count": "{{n}}",
     "prompts": "{{n}} prompts",
     "workspace": "Workspace",
     "sessionWorkspace": "Session workspace",
-    "ago": { "now": "Just now", "min": "{{n}} min ago", "hour": "{{n}} hr ago", "day": "{{n}} days ago" },
+    "ago": {
+      "now": "Just now",
+      "min": "{{n}} min ago",
+      "hour": "{{n}} hr ago",
+      "day": "{{n}} days ago"
+    },
     "empty": "No T3 sessions yet",
     "openSession": "Open session",
     "noDeepLink": "T3 Code environment-id not found",
@@ -459,7 +474,10 @@
       "prompts": "{{n}} prompts",
       "noSessions": "No sessions today yet"
     },
-    "timeline": { "now": "Now", "todayTotal": "Today {{time}}" }
+    "timeline": {
+      "now": "Now",
+      "todayTotal": "Today {{time}}"
+    }
   },
   "conversation": {
     "title": "Conversation",
@@ -505,5 +523,12 @@
     "revoked": "Authorization revoked",
     "failed": "Authorization did not complete. Please try again (details in the console).",
     "openFailed": "Could not open the browser. Check your default browser."
-  }
+  },
+  "groupAutoArchive": "Auto-archive checklists",
+  "autoArchiveEnabled": "Auto-archive on startup",
+  "autoArchiveEnabledDesc": "Runs in the background at idle after startup (never blocks Obsidian). When a checklist exceeds the done-task threshold, the oldest block is moved into an archive file in the same folder; files modified within 24 hours are skipped.",
+  "autoArchiveThreshold": "Trigger threshold (done tasks)",
+  "autoArchiveThresholdDesc": "Archive only when a file has more than this many completed tasks. Default 100.",
+  "autoArchiveKeep": "Keep recent done tasks",
+  "autoArchiveKeepDesc": "When triggered, keep the most recent N completed tasks in place (default 50); older ones are archived."
 }
