@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
+import * as API from '../core/api/tasks.js';
 import { rewriteSessionLine, locateSessionLine } from './session-line.js';
 import { applySummaryToLines } from './summarize-apply.js';
 import { buildTranscript, buildSummaryPrompt, countUserPrompts } from './summarize-llm.js';
@@ -30,10 +31,9 @@ export function findT3Binary(configured = '') {
 // 全文档行号（含 frontmatter）→ 正文行号。编辑器 CM6 给的是前者，落盘按后者。
 async function toBodyLineNo(plugin, filePath, lineNo, basis) {
   if (basis !== 'document' || !filePath) return lineNo;
-  const f = plugin.app.vault.getAbstractFileByPath(filePath);
-  if (!f) return lineNo;
-  const raw = String(await plugin.app.vault.read(f));
-  const m = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(raw);
+  const doc = await API.readListDoc(filePath);
+  if (!doc) return lineNo;
+  const m = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(doc.head);
   const fmLines = m ? m[0].split('\n').length - 1 : 0;
   return Math.max(0, lineNo - fmLines);
 }
@@ -118,14 +118,13 @@ export async function startDelegation(plugin, rt, opts) {
   const locateOwnLine = (lines, threadId) => locateSessionLine(lines, { threadId, pendingId, cachedLineNo: lineNo });
 
   const finishLine = async (threadId, state, summary) => {
-    const f = plugin.app.vault.getAbstractFileByPath(node.filePath);
-    if (!f) return;
-    const { head, lines } = (rt.splitFile ? rt.splitFile(await plugin.app.vault.read(f)) : { head: '', lines: String(await plugin.app.vault.read(f)).split('\n') });
-    const at = locateOwnLine(lines, threadId);
+    const doc = await API.readListDoc(node.filePath);
+    if (!doc) return;
+    const at = locateOwnLine(doc.lines, threadId);
     if (at < 0) return;
     // 只改状态/摘要/标记，保留缩进与父行类型
-    lines[at] = rewriteSessionLine(lines[at], { state, title: summary, threadId });
-    await plugin.app.vault.modify(f, rt.joinFile ? rt.joinFile(head, lines) : lines.join('\n'));
+    const next = rewriteSessionLine(doc.lines[at], { state, title: summary, threadId });
+    await API.replaceListLines(node.filePath, at, [next]);
   };
 
   // 1.5s 后尝试从数据库回填 threadId（CLI 结束时才输出，长会话期间靠扫描回填）。
@@ -192,9 +191,9 @@ async function finishWithSummary(plugin, rt, node, lineNo, threadId, state, { pr
       delegationPrompt: prompt
     });
   }
-  const f = plugin.app.vault.getAbstractFileByPath(node.filePath);
-  if (!f) return;
-  const { head, lines } = rt.splitFile(await plugin.app.vault.read(f));
+  const doc = await API.readListDoc(node.filePath);
+  if (!doc) return;
+  const { head, lines } = doc;
   // 行号漂移安全定位（与 finishLine 同规则：threadId → 占位 id → 插入行号）
   const at = locateSessionLine(lines, { threadId, pendingId, cachedLineNo: lineNo });
   if (at < 0) return;
@@ -206,7 +205,7 @@ async function finishWithSummary(plugin, rt, node, lineNo, threadId, state, { pr
   if (!r.ok) {
     lines[at] = rewriteSessionLine(lines[at], { state, title: fallback, threadId });
   }
-  await plugin.app.vault.modify(f, rt.joinFile(head, lines));
+  await API.writeListDoc(node.filePath, head, lines);
 }
 
 // Electron 主进程网络栈通路：渲染进程 fetch 走 Chromium 栈，对系统代理/内网证书站点

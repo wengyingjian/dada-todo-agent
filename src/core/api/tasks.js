@@ -349,6 +349,118 @@ async function writeTasks(path, head, lines) {
   }
 }
 
+// ---------- 清单文件的通用行级读写原语 ----------
+// 面向清单/项目文件（frontmatter + 正文行）的底层 IO 出口：所有清单类文件
+// （含 projectsRoot 下的 task-*.md）的写操作都必须经过这里，保证：
+//   1. 自写标记（noteSelfWrite）统一打上，外部变更自动刷新不会误判；
+//   2. frontmatter / 正文切分只有一套实现（splitDoc），行号口径统一为「正文行号」。
+// 这些原语是核心 API（createChecklistTask 等）与 project 层共用的地基，语义刻意
+// 保持「行数组进出」，不做任务模型解释——会话行、委派子行等非任务行也适用。
+
+// 读清单文件：返回 { path, head, lines, file }。文件不存在返回 null（不隐式创建）。
+// lines 为正文行数组（不含 frontmatter），与上游 API 的 guid 行号口径一致。
+export async function readListDoc(path) {
+  const f = vault().getAbstractFileByPath(path);
+  if (!(f instanceof TFile)) return null;
+  const { head, body } = splitDoc(await vault().cachedRead(f));
+  return { path, head, lines: body.split('\n'), file: f };
+}
+
+// 整体落盘（modify 或 create；创建时自动补父文件夹）。
+export async function writeListDoc(path, head, lines) {
+  noteSelfWrite();
+  await writeTasks(path, head, lines);
+}
+
+// 在正文某行之后插入若干行（afterLineNo = -1 或省略 → 插在最开头）。
+// 返回插入起始行号；文件不存在返回 null。
+export async function insertListLines(path, afterLineNo, newLines) {
+  const doc = await readListDoc(path);
+  if (!doc) return null;
+  const at = Number.isInteger(afterLineNo) && afterLineNo >= 0
+    ? Math.min(afterLineNo + 1, doc.lines.length)
+    : 0;
+  const lines = doc.lines.slice();
+  lines.splice(at, 0, ...newLines);
+  await writeListDoc(path, doc.head, lines);
+  return at;
+}
+
+// 把第 lineNo 行替换为若干行（patchLines 可为空串元素以外的任意行数组）。
+// 返回 { lineNo }（替换后首行位置）；文件或行不存在返回 null。
+export async function replaceListLines(path, lineNo, patchLines) {
+  const doc = await readListDoc(path);
+  if (!doc) return null;
+  if (!(lineNo >= 0 && lineNo < doc.lines.length)) return null;
+  const lines = doc.lines.slice();
+  lines.splice(lineNo, 1, ...patchLines);
+  await writeListDoc(path, doc.head, lines);
+  return { lineNo };
+}
+
+// 删除正文行区间 [from, to]（含端点）。返回删除的行数；文件不存在返回 null。
+export async function removeListLines(path, from, to) {
+  const doc = await readListDoc(path);
+  if (!doc) return null;
+  const a = Math.max(0, from), b = Math.min(to, doc.lines.length - 1);
+  if (a > b) return 0;
+  const lines = doc.lines.slice();
+  lines.splice(a, b - a + 1);
+  await writeListDoc(path, doc.head, lines);
+  return b - a + 1;
+}
+
+// 更新清单 frontmatter（保留其余字段）：patch 对象写值，undefined 值删字段。
+// processFrontMatter 自己会触发 modify，成功后统一补自写标记。文件不存在返回 null。
+export async function updateListFrontmatter(path, patch) {
+  const f = vault().getAbstractFileByPath(path);
+  if (!(f instanceof TFile)) return null;
+  noteSelfWrite();
+  await plugin.app.fileManager.processFrontMatter(f, (fm) => {
+    for (const [k, v] of Object.entries(patch || {})) {
+      if (v === undefined) delete fm[k]; else fm[k] = v;
+    }
+  });
+  return true;
+}
+
+// 创建清单类文件（文件创建的唯一入口；已存在返回 409 语义的 { ok:false, reason:'exists' }）。
+// frontmatter = { ...defaults, ...extra } 单一出处，正文 lines 可为空。
+// 返回 { ok: true, path }。
+export async function createListFile(path, frontmatter, lines = []) {
+  noteSelfWrite();
+  const v = vault();
+  if (v.getAbstractFileByPath(path)) return { ok: false, reason: 'exists' };
+  const entries = Object.entries(frontmatter || {}).filter(([, v]) => v !== undefined && v !== null && String(v) !== '');
+  const head = entries.length
+    ? `---\n${entries.map(([k, v]) => {
+        // 数组写成 YAML 列表（tags 等）；标量含 YAML 特殊字符时加引号
+        if (Array.isArray(v)) return `${k}:\n${v.map((x) => `  - ${yamlScalar(x)}`).join('\n')}\n`;
+        return `${k}: ${yamlScalar(v)}\n`;
+      }).join('')}---\n\n`
+    : '';
+  const body = lines.length ? lines.join('\n') + '\n\n' : '\n';
+  await ensureFolder(path.split('/').slice(0, -1).join('/'));
+  try {
+    await v.create(path, head + body);
+  } catch (e) {
+    // 并发 / 文件树缓存未就绪导致的 already exists：按「已存在」上报，不覆盖
+    if (/already exists/i.test((e && e.message) || '')) return { ok: false, reason: 'exists' };
+    throw e;
+  }
+  return { ok: true, path };
+}
+
+// 重命名清单类文件（vault.renameFile 的收口出口；触发 Obsidian 自己的 link 修复）。
+export async function renameListFile(oldPath, newPath) {
+  noteSelfWrite();
+  const f = vault().getAbstractFileByPath(oldPath);
+  if (!(f instanceof TFile)) return { ok: false, reason: 'not_found' };
+  if (vault().getAbstractFileByPath(newPath)) return { ok: false, reason: 'exists' };
+  await plugin.app.fileManager.renameFile(f, newPath);
+  return { ok: true, path: newPath };
+}
+
 async function ensureFolder(pathWithoutFile) {
   // 空路径 = 库根目录：无需创建（启动早期文件树缓存未就绪时，
   // getAbstractFileByPath('') 会返回 null，进而 createFolder('') 抛 "Folder already exists"）
@@ -444,33 +556,39 @@ async function listChecklists() {
 // 存放位置由 checklistFolder 决定（默认 清单/<名称>.md），正文只写清单标记 frontmatter
 // （分组 ### 由用户后续自行维护）。校验全部在写文件之前：
 // 空名 / 非法名 / 文件夹设置不可用 → 400，重名 → 409（绝不覆盖用户笔记）。
+// 目录 / 额外 frontmatter 可经 opts.dir / opts.extraFm 覆盖（project 层建 task-*.md 复用此入口，
+// 消灭 PROJECT_HEAD 第二套模板）。
 export async function createChecklist(name, opts = {}) {
   const n = String(name == null ? '' : name).trim();
   const nameErr = checklistNameError(n);
   if (nameErr) return res(400, { ok: false, reason: nameErr });
-  const folder = checklistFolder();
-  if (folder == null) return res(400, { ok: false, reason: 'bad_folder' });
+  const o = opts || {};
+  let folder;
+  if (o.dir != null) {
+    // 显式指定目录（project 层路径）：归一化后校验，非法则拒绝
+    folder = normFolder(String(o.dir));
+    if (folder.split('/').some((seg) => seg === '.' || seg === '..')) return res(400, { ok: false, reason: 'bad_dir' });
+  } else {
+    folder = checklistFolder();
+    if (folder == null) return res(400, { ok: false, reason: 'bad_folder' });
+  }
   const rel = folder ? `${folder}/${n}` : n;
   const path = `${rel}.md`;
   const v = vault();
   if (v.getAbstractFileByPath(path)) return res(409, { ok: false, reason: 'exists' });
   // 库内已有同名清单（可能在别的目录）：侧栏只显示文件名，重名会变成两个看不出区别的条目，
   // 建之前就挡住，并回传已存在文件的路径，让提示能说清是哪一份。
-  const o = opts || {};
   const same = checklistFileEntries().find((e) => e.name === n && e.path !== path);
   if (same) return res(409, { ok: false, reason: 'exists_other', path: same.path });
   // 清单标记取第一个即可（识别时任一命中，写一个足够）；含 YAML 特殊字符时加引号，避免被解析成非字符串
   const tag = String(checklistTags()[0] || 'todoList');
   const cwd = String(o.cwd == null ? '' : o.cwd).trim();
-  const head = `---\ntags:\n  - ${yamlScalar(tag)}\n${cwd ? `cwd: ${yamlScalar(cwd)}\n` : ''}---\n\n`;
-  noteSelfWrite();
-  await ensureFolder(folder);
-  try {
-    await v.create(path, head);
-  } catch (e) {
-    // 并发 / 文件树缓存未就绪导致的 already exists：按「已存在」上报，不覆盖
-    if (/already exists/i.test((e && e.message) || '')) return res(409, { ok: false, reason: 'exists' });
-    throw e;
+  const created = await createListFile(path, Object.assign(
+    { tags: [tag], cwd: cwd || undefined },
+    (o.extraFm && typeof o.extraFm === 'object') ? o.extraFm : {}
+  ));
+  if (!created.ok) {
+    return res(created.reason === 'exists' ? 409 : 400, { ok: false, reason: created.reason || 'create_failed' });
   }
   const key = CL_PREFIX + rel;
   return res(201, { ok: true, key, path, item: { key, name: n, total: 0, done: 0 } });

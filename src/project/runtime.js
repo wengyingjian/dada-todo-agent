@@ -75,11 +75,13 @@ export async function loadProjectTasks(plugin, node) {
 
 // 上游任务 API 的行号是「正文行号」（不含 frontmatter）。项目视图的读写一律按这个口径，
 // 否则归档与委派子行会整体错位。
-const HEAD_RE = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
+// 文件 IO 已收口到 core/api/tasks.js 的行级原语（readListDoc/writeListDoc/...）：
+// 项目文件与清单文件共用同一套 frontmatter 切分与写路径，本模块不再直接 vault.read/modify。
 
 export function splitFile(raw) {
+  // 兼容保留（delegate.test.mjs 等单测与外部调用）：语义与 core 的 splitDoc 一致
   const text = String(raw == null ? '' : raw);
-  const m = HEAD_RE.exec(text);
+  const m = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(text);
   if (!m) return { head: '', lines: text.split('\n') };
   return { head: m[0], lines: text.slice(m[0].length).split('\n') };
 }
@@ -90,9 +92,8 @@ export function joinFile(head, lines) {
 
 export async function readProjectLines(plugin, node) {
   if (!node || !node.filePath) return [];
-  const f = plugin.app.vault.getAbstractFileByPath(node.filePath);
-  if (!(f instanceof TFile)) return [];
-  return splitFile(await plugin.app.vault.read(f)).lines;
+  const doc = await API.readListDoc(node.filePath);
+  return doc ? doc.lines : [];
 }
 
 // 委派子行按父行行号归组。
@@ -109,15 +110,16 @@ export async function loadDelegations(plugin, node) {
   return byParent;
 }
 
-const PROJECT_HEAD = (cwd) => `---\ntype: project\ntags: [todoList]\nstatus: active\n${cwd ? `cwd: ${cwd}\n` : ''}---\n\n`;
+// 项目文件 frontmatter（type: project + 清单标记 + status + cwd）——与清单文件共用
+// createListFile 单一出处，本模块不再维护第二套模板。
+const PROJECT_FM = (cwd) => ({ type: 'project', tags: [checklistTags()[0] || 'todoList'], status: 'active', cwd: cwd || undefined });
 
 export async function ensureProjectFile(plugin, node) {
   if (node.filePath) return node.filePath;
   const path = projectFilePath(node.dirPath);
-  const folder = node.dirPath;
-  await ensureFolder(plugin, folder);
   const cwd = normalizeCwd(node.ownCwd || '');
-  await plugin.app.vault.create(path, PROJECT_HEAD(cwd));
+  const r = await API.createListFile(path, PROJECT_FM(cwd));
+  if (!r.ok && r.reason !== 'exists') return null;
   node.filePath = path;
   return path;
 }
@@ -160,7 +162,8 @@ export async function createProject(plugin, parentDirPath, name) {
   if (plugin.app.vault.getAbstractFileByPath(dir)) return { ok: false, reason: 'exists' };
   await ensureFolder(plugin, dir);
   const path = projectFilePath(dir);
-  await plugin.app.vault.create(path, PROJECT_HEAD(''));
+  const r = await API.createListFile(path, PROJECT_FM(''));
+  if (!r.ok && r.reason !== 'exists') return { ok: false, reason: r.reason || 'create_failed' };
   return { ok: true, dirPath: dir, filePath: path };
 }
 
@@ -174,23 +177,23 @@ export async function renameProject(plugin, node, newName) {
   const folder = plugin.app.vault.getAbstractFileByPath(node.dirPath);
   if (!(folder instanceof TFolder)) return { ok: false, reason: 'no_folder' };
   await plugin.app.fileManager.renameFile(folder, newDir);
-  const oldFile = plugin.app.vault.getAbstractFileByPath(`${newDir}/task-${node.name}.md`);
-  if (oldFile instanceof TFile) {
-    await plugin.app.fileManager.renameFile(oldFile, `${newDir}/task-${n}.md`);
+  // task-*.md 重命名走核心原语（过自写标记与重名校验）
+  const oldPath = `${newDir}/task-${node.name}.md`;
+  if (plugin.app.vault.getAbstractFileByPath(oldPath)) {
+    await API.renameListFile(oldPath, `${newDir}/task-${n}.md`);
   }
   return { ok: true, dirPath: newDir };
 }
 
 export async function setProjectCwd(plugin, node, cwd) {
   await ensureProjectFile(plugin, node);
-  const f = plugin.app.vault.getAbstractFileByPath(node.filePath);
-  if (!(f instanceof TFile)) return { ok: false };
   const v = normalizeCwd(cwd);
-  await plugin.app.fileManager.processFrontMatter(f, (fm) => {
-    if (v) fm.cwd = v; else delete fm.cwd;
-    fm.type = 'project';
-    if (!fm.tags) fm.tags = ['todoList'];
+  const fm = await API.updateListFrontmatter(node.filePath, {
+    cwd: v || undefined,
+    type: 'project',
+    tags: PROJECT_FM(v).tags
   });
+  if (!fm) return { ok: false };
   // 设置/修改项目 cwd = 明确选择「项目」：清掉该 cwd 的日记 / 忽略记录，避免显式列表覆盖项目
   if (v && plugin.settings) {
     const s = plugin.settings;
@@ -224,9 +227,9 @@ export function taskBlocks(lines) {
 export async function archiveTasks(plugin, node, lineNos) {
   const target = new Set(lineNos);
   if (!target.size) return { ok: true, moved: 0 };
-  const srcFile = plugin.app.vault.getAbstractFileByPath(node.filePath);
-  if (!(srcFile instanceof TFile)) return { ok: false, reason: 'no_file' };
-  const { head, lines } = splitFile(await plugin.app.vault.read(srcFile));
+  const doc = await API.readListDoc(node.filePath);
+  if (!doc) return { ok: false, reason: 'no_file' };
+  const { head, lines } = doc;
   const blocks = taskBlocks(lines).filter((b) => target.has(b.start));
   if (!blocks.length) return { ok: true, moved: 0 };
 
@@ -244,7 +247,8 @@ export async function archiveTasks(plugin, node, lineNos) {
     for (const child of folder.children) {
       if (!(child instanceof TFile) || !/\.md$/i.test(child.path)) continue;
       if (child.path === node.filePath) continue;
-      siblings.push({ path: child.path, lines: splitFile(await plugin.app.vault.read(child)).lines });
+      const sib = await API.readListDoc(child.path);
+      siblings.push({ path: child.path, lines: sib ? sib.lines : [] });
     }
   }
   const dates = blocks
@@ -253,17 +257,24 @@ export async function archiveTasks(plugin, node, lineNos) {
   if (!dates.length) dates.push(new Date().toISOString().slice(0, 10));
 
   const pick = pickArchiveFile(siblings, dates, node.dirPath);
-  let archiveRaw;
-  const archiveFile = plugin.app.vault.getAbstractFileByPath(pick.path);
-  if (archiveFile instanceof TFile) {
-    archiveRaw = String(await plugin.app.vault.read(archiveFile));
-    const text = archiveRaw.replace(/\s+$/, '') + '\n\n' + movedLines.join('\n') + '\n';
-    await plugin.app.vault.modify(archiveFile, text);
+  const archiveDoc = await API.readListDoc(pick.path);
+  if (archiveDoc) {
+    // 追加到归档文件末尾：原内容去尾随空白 + 空行分隔 + 搬入块 + 结尾换行
+    // （等价于旧实现的 `raw.replace(/\s+$/,'') + '\n\n' + moved + '\n'`，lines 末尾空串即结尾换行）
+    await API.writeListDoc(pick.path, archiveDoc.head,
+      [...trimTrailingBlank(archiveDoc.lines), '', ...movedLines, '']);
   } else {
-    await plugin.app.vault.create(pick.path, '# 归档\n\n' + movedLines.join('\n') + '\n');
+    await API.createListFile(pick.path, {}, ['# 归档', '', ...movedLines, '']);
   }
-  await plugin.app.vault.modify(srcFile, joinFile(head, kept).replace(/\s+$/, '') + '\n');
+  await API.writeListDoc(node.filePath, head, [...trimTrailingBlank(kept), '']);
   return { ok: true, moved: blocks.length, archivePath: pick.path };
+}
+
+// 去尾随空行（末尾的空串行），配合末尾补 '' 实现「以单个换行收尾」
+function trimTrailingBlank(lines) {
+  const out = (lines || []).slice();
+  while (out.length && !String(out[out.length - 1] || '').trim()) out.pop();
+  return out;
 }
 
 export async function listArchives(plugin, node) {
@@ -278,26 +289,24 @@ export async function listArchives(plugin, node) {
 // ---------- 委派子行写入 ----------
 
 export async function appendDelegation(plugin, node, parentLineNo, delegate) {
-  const file = plugin.app.vault.getAbstractFileByPath(node.filePath);
-  if (!(file instanceof TFile)) return { ok: false };
-  const { head, lines } = splitFile(await plugin.app.vault.read(file));
+  const doc = await API.readListDoc(node.filePath);
+  if (!doc) return { ok: false };
   // 子行紧贴父行下一行（中间有空行会断开列表层级）；父行下方原有空行被子行顶到后面，不删除
-  const { at } = planDelegationInsert(lines, parentLineNo);
+  const { at } = planDelegationInsert(doc.lines, parentLineNo);
   const line = formatDelegationLine(delegate);
-  lines.splice(at, 0, line);
-  await plugin.app.vault.modify(file, joinFile(head, lines));
-  return { ok: true, lineNo: at };
+  const at2 = await API.insertListLines(node.filePath, at - 1, [line]);
+  if (at2 == null) return { ok: false };
+  return { ok: true, lineNo: at2 };
 }
 
 // 确保项目文件的三个 ### 分组标题齐全（缺失的追加到末尾），落盘。
 // 返回 true 表示文件有变更。已有任务块一律不动（老任务留在未分组区）。
 async function ensureGroupHeadingsInFile(plugin, filePath) {
-  const file = plugin.app.vault.getAbstractFileByPath(filePath);
-  if (!(file instanceof TFile)) return false;
-  const { head, lines } = splitFile(await plugin.app.vault.read(file));
-  const { lines: next, added } = ensureGroupHeadings(lines);
+  const doc = await API.readListDoc(filePath);
+  if (!doc) return false;
+  const { lines: next, added } = ensureGroupHeadings(doc.lines);
   if (!added.length) return false;
-  await plugin.app.vault.modify(file, joinFile(head, next));
+  await API.writeListDoc(filePath, doc.head, next);
   return true;
 }
 
@@ -305,19 +314,19 @@ async function ensureGroupHeadingsInFile(plugin, filePath) {
 // 按 threadId 现场定位；回填阶段可传 patch.pendingId 按占位 id 定位。
 // 只替换指定字段——时间前缀与 📅/🛫 日期徽标原样保留。
 export async function updateDelegation(plugin, filePath, threadId, patch = {}) {
-  const file = plugin.app.vault.getAbstractFileByPath(filePath);
-  if (!(file instanceof TFile)) return { ok: false };
-  const { head, lines } = splitFile(await plugin.app.vault.read(file));
-  const at = locateSessionLine(lines, { threadId, pendingId: patch.pendingId || '' });
+  const doc = await API.readListDoc(filePath);
+  if (!doc) return { ok: false };
+  const at = locateSessionLine(doc.lines, { threadId, pendingId: patch.pendingId || '' });
   if (at < 0) return { ok: false, reason: 'not_found' };
-  lines[at] = rewriteSessionLine(lines[at], {
+  const next = rewriteSessionLine(doc.lines[at], {
     state: patch.state,
     title: patch.summary,
     threadId: threadId || undefined,
     summarizedPromptCount: patch.summarizedPromptCount
   });
-  await plugin.app.vault.modify(file, joinFile(head, lines));
-  return { ok: true, lineNo: at };
+  const r = await API.replaceListLines(filePath, at, [next]);
+  if (!r) return { ok: false };
+  return { ok: true, lineNo: r.lineNo };
 }
 
 // 状态跨组时把整块（父任务 + 委派子行 + 总结描述行）搬到目标分组末尾。
@@ -327,11 +336,11 @@ async function moveDelegationToGroup(plugin, loc, state) {
   const target = groupOfState(state);
   if (!target) return { ok: false, reason: 'no_group' };
   if (!/task-[^/]*\.md$/.test(String(loc.filePath || ''))) return { ok: false, reason: 'not_project' };
-  const file = plugin.app.vault.getAbstractFileByPath(loc.filePath);
-  if (!(file instanceof TFile)) return { ok: false, reason: 'no_file' };
   // 先补齐分组标题再重新读文件定位：补标题会改变行号，定位必须基于最终内容
   await ensureGroupHeadingsInFile(plugin, loc.filePath);
-  const lines = splitFile(await plugin.app.vault.read(file)).lines;
+  const doc = await API.readListDoc(loc.filePath);
+  if (!doc) return { ok: false, reason: 'no_file' };
+  const lines = doc.lines;
   // 现场重扫定位（一次同步里前面搬过块后缓存行号全部漂移，loc.lineNo/parentLine 都不可信）
   const at = locateSessionLine(lines, { threadId: loc.threadId });
   if (at < 0) return { ok: false, reason: 'not_found' };
@@ -372,7 +381,8 @@ export async function scanDelegationRecords(plugin) {
   };
   for (const f of plugin.app.vault.getMarkdownFiles()) {
     if (!inScope(f.path)) continue;
-    const lines = splitFile(await plugin.app.vault.read(f)).lines;
+    const doc = await API.readListDoc(f.path);
+    const lines = doc ? doc.lines : [];
     for (const d of extractDelegations(lines)) {
       if (!d.threadId) {
         // 占位行：记下摘要与 pendingId，供 syncOnce 认领
@@ -474,9 +484,9 @@ function matchPending(pending, thread) {
 async function createThreadTask(plugin, node, { groupTitle, summary, points = [], threadId, state = 'running', promptCount = null }) {
   const r = unwrap(await API.createChecklistTask(listKeyOf(node.filePath), groupTitle, { summary }));
   if (!r || !r.ok || !r.task) return null;
-  const file = plugin.app.vault.getAbstractFileByPath(node.filePath);
-  if (!(file instanceof TFile)) return null;
-  const { head, lines } = splitFile(await plugin.app.vault.read(file));
+  const doc = await API.readListDoc(node.filePath);
+  if (!doc) return null;
+  const { head, lines } = doc;
   // createChecklistTask 返回正文行号；落笔前校验它确实是任务行，行号失效时按标题兜底
   let at = Number.isInteger(r.task.lineNo) ? r.task.lineNo : -1;
   if (at < 0 || !isTaskLine(lines[at])) {
@@ -486,8 +496,8 @@ async function createThreadTask(plugin, node, { groupTitle, summary, points = []
   if (at < 0) return null;
   const head2 = rewriteSessionLine(lines[at], { state, threadId, summarizedPromptCount: promptCount });
   const desc = (points || []).map((p, i) => `  ${i + 1}. ${p}`);
-  lines.splice(at, 1, head2, ...desc);
-  await plugin.app.vault.modify(file, joinFile(head, lines));
+  const r2 = await API.replaceListLines(node.filePath, at, [head2, ...desc]);
+  if (!r2) return null;
   return { ok: true, lineNo: at };
 }
 
@@ -661,9 +671,9 @@ export async function resummarizeIfNeeded(plugin, thread, loc, s) {
     settings: s
   });
   if (!summary || summary.promptCount <= (loc.summarizedPromptCount || 0)) return false;
-  const file = plugin.app.vault.getAbstractFileByPath(loc.filePath);
-  if (!(file instanceof TFile)) return false;
-  const { head, lines } = splitFile(await plugin.app.vault.read(file));
+  const doc = await API.readListDoc(loc.filePath);
+  if (!doc) return false;
+  const { head, lines } = doc;
   // 行号漂移安全定位：按 threadId 现场扫文件，缓存行号只作回退
   const at = locateDelegationLine(lines, thread.threadId, loc.lineNo);
   if (at < 0) return false;
@@ -675,7 +685,7 @@ export async function resummarizeIfNeeded(plugin, thread, loc, s) {
     points: summary.points
   });
   if (!r.ok) return false;
-  await plugin.app.vault.modify(file, joinFile(head, lines));
+  await API.writeListDoc(loc.filePath, head, lines);
   return true;
 }
 
@@ -787,15 +797,15 @@ export async function importThreadsToJournal(plugin, cwd, opts = {}) {
 
 // 把刚插入的委派占位行替换为总结块（行号可能漂移，按 threadId 现场定位）。
 async function applySummaryAtLine(plugin, node, lineNo, summary) {
-  const file = plugin.app.vault.getAbstractFileByPath(node.filePath);
-  if (!(file instanceof TFile)) return { ok: false };
-  const { head, lines } = splitFile(await plugin.app.vault.read(file));
+  const doc = await API.readListDoc(node.filePath);
+  if (!doc) return { ok: false };
+  const { head, lines } = doc;
   const at = locateDelegationLine(lines, summary.threadId, lineNo);
   if (at < 0) return { ok: false, reason: 'not_found' };
   // 用「替换」而不是「追加」：该行可能已有一版分点（再总结/重复触发），追加会留下残行
   const r = replaceSummaryInLines(lines, at, summary);
   if (!r.ok) return r;
-  await plugin.app.vault.modify(file, joinFile(head, lines));
+  await API.writeListDoc(node.filePath, head, lines);
   return { ok: true, lineNo: at };
 }
 
@@ -839,9 +849,9 @@ export async function moveDelegationsToProject(plugin, node) {
   const movedTargets = [];
   const cleanedFiles = [];
   for (const srcPath of filePaths) {
-    const f = plugin.app.vault.getAbstractFileByPath(srcPath);
-    if (!(f instanceof TFile)) continue;
-    const { head, lines } = splitFile(await plugin.app.vault.read(f));
+    const doc = await API.readListDoc(srcPath);
+    if (!doc) continue;
+    const { head, lines } = doc;
     // 收集要搬的顶层任务块：块内任一行是目标 threadId 的委派子行 → 整块搬
     const blocks = taskBlocks(lines).filter((b) =>
       lines.slice(b.start, b.end).some((l) => {
@@ -854,16 +864,16 @@ export async function moveDelegationsToProject(plugin, node) {
       for (let i = b.start; i < b.end; i++) { movedTargets.push(lines[i]); removed.add(i); }
     }
     const kept = lines.filter((_, i) => !removed.has(i));
-    await plugin.app.vault.modify(f, joinFile(head, kept).replace(/\s+$/, '') + '\n');
+    await API.writeListDoc(srcPath, head, [...trimTrailingBlank(kept), '']);
     cleanedFiles.push(srcPath);
   }
   if (!movedTargets.length) return { moved: 0, files: [] };
 
   // 追加到项目任务文件尾部（保留 frontmatter）
-  const tf = plugin.app.vault.getAbstractFileByPath(node.filePath);
-  if (!(tf instanceof TFile)) return { moved: 0, files: [], reason: 'no_file' };
-  const raw = String(await plugin.app.vault.read(tf)).replace(/\s+$/, '');
-  await plugin.app.vault.modify(tf, raw + '\n\n' + movedTargets.join('\n') + '\n');
+  const tf = await API.readListDoc(node.filePath);
+  if (!tf) return { moved: 0, files: [], reason: 'no_file' };
+  await API.writeListDoc(node.filePath, tf.head,
+    [...trimTrailingBlank(tf.lines), '', ...movedTargets, '']);
   return { moved: movedTargets.filter((l) => /^- \[[ xX/-]\]/.test(l)).length, files: cleanedFiles };
 }
 
