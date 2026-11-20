@@ -114,9 +114,10 @@ export class ConversationModal extends Modal {
     });
     const row = wrap.createDiv({ cls: 'dada-composer__row' });
     row.createSpan({ cls: 'dada-composer__hint', text: t('conversation.sendHint') });
-    // 说明并进发送按钮左边，不再单独占一行
-    setLucide(row.createSpan({ cls: 'ad-conv-foot__ico' }), 'info');
-    this.footTextEl = row.createSpan({ cls: 'dada-composer__foot', text: t('conversation.foot') });
+    // 说明靠右，紧挨发送按钮左侧，不再单独占一行
+    const foot = row.createSpan({ cls: 'dada-composer__foot' });
+    setLucide(foot.createSpan({ cls: 'ad-conv-foot__ico' }), 'info');
+    this.footTextEl = foot.createSpan({ text: t('conversation.foot') });
     this.sendBtn = row.createEl('button', {
       cls: 'ad-btn ad-btn--cta dada-composer__send',
       text: t('conversation.send'),

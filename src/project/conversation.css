@@ -389,6 +389,10 @@
   color: var(--ad-muted);
 }
 .dada-conversation .dada-composer__foot {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
   font-size: 11px;
   line-height: 1.5;
   color: var(--ad-muted);
@@ -397,7 +401,7 @@
   white-space: nowrap;
 }
 .dada-conversation .dada-composer__send {
-  margin-left: auto;
+  margin-left: 0;
 }
 .dada-conversation .ad-conv-foot__ico {
   display: inline-flex;
