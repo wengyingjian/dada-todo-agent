@@ -68,8 +68,8 @@ export function requestThreadRefresh() {
 
 // 反向同步由快照驱动：hub 广播 → syncOnce（内部有静默门槛与 reverseSync 开关）
 export function startReverseSync(plugin) {
-  threadHub(plugin).subscribe(() => {
-    syncOnce(plugin).catch((e) => console.warn('[DadaAgent] 反向同步失败：', e));
+  threadHub(plugin).subscribe((threads) => {
+    syncOnce(plugin, threads).catch((e) => console.warn('[DadaAgent] 反向同步失败：', e));
   });
 }
 
@@ -513,11 +513,19 @@ async function createThreadTask(plugin, node, { groupTitle, summary, points = []
 // 一次扫描：回传未绑定会话 + 更新已绑定会话的状态。
 // 未绑定会话只有两条去路：命中项目 → 写项目文件；显式选择放入日记 → 写当天日记。
 // 忽略与未设置一律跳过（未设置的仅弹窗提醒，关闭弹窗仍保持未设置，不回传）。
-export async function syncOnce(plugin) {
+// 数据来自 thread-hub 快照（由 startReverseSync 的订阅回调传入），
+// 不再自己 fork sqlite3——快照本来就有全量会话，这里只按 24h+syncSince 窗口过滤。
+export async function syncOnce(plugin, snapshotThreads = null) {
   const s = projectSettings(plugin);
   if (!s.reverseSync) return { created: 0, updated: 0 };
   const since = Math.max(Number(s.syncSince) || 0, Date.now() - 24 * 3600 * 1000);
-  const threads = await queryThreads(t3DbPath(), since).catch(() => []);
+  let threads;
+  if (snapshotThreads) {
+    threads = (snapshotThreads || []).filter((t) => t.createdAt >= since);
+  } else {
+    // 兜底路径（无快照来源时）：保持旧的直接查库行为
+    threads = await queryThreads(t3DbPath(), since).catch(() => []);
+  }
   if (!threads.length) return { created: 0, updated: 0 };
 
   const idx = scanProjects(plugin);
