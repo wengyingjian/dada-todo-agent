@@ -829,24 +829,10 @@ export class DadaTodoSettingTab extends PluginSettingTab {
       })
     }]);
 
-    // ---------- [project-view] 项目与委派 ----------
-    // 项目视图以「项目根目录」为数据库：每个子文件夹是一个项目，文件夹里的 task-*.md 存任务；
-    // 任务行右侧的小飞机把任务交给 T3 Code，会话结果再反向同步回任务行。
+    // ---------- 项目与委派 ----------
+    // 项目 = 清单文件夹里的一份清单文件（frontmatter 带 cwd）；委派/反向同步按 cwd 归属。
+    // 「项目根目录」设置已废除，项目落点统一跟随「清单文件夹」（收件箱与清单 tab）。
     const projectGroup = group('groupProject', [
-      row('projectsRoot', 'projectsRootDesc', (s) => {
-        s.addText((tx) => {
-          tx.setPlaceholder('任务');
-          tx.setValue(plugin.settings.project.projectsRoot || '任务');
-          tx.onChange((value) => {
-            plugin.settings.project.projectsRoot = (value || '').trim() || '任务';
-            plugin.saveSettings();
-          });
-          new FolderSuggest(app, tx.inputEl, (path) => {
-            plugin.settings.project.projectsRoot = (path || '').trim() || '任务';
-            plugin.saveSettings();
-          });
-        });
-      }),
       row('projectCwd', 'projectCwdDesc', (s) => {
         s.addText((tx) => {
           tx.setPlaceholder('/Users/you/Projects');

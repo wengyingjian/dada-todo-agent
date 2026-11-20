@@ -11,9 +11,9 @@ export const VIEW_MENU_ITEMS = [
   { key: 'agenda', labelKey: 'app.viewAgenda', icon: 'la la-list-alt' },
   { key: 'matrix', labelKey: 'app.viewMatrix', icon: 'la la-th-large' },
   { key: 'cl', labelKey: 'app.viewCl', icon: 'la la-tasks' },
-  // [project-view] 项目视图
-  { key: 'project', labelKey: 'app.viewProject', icon: 'la la-folder' },
   { key: 'all', labelKey: 'app.viewAll', icon: 'la la-list' }
+  // 「项目」视图已废除（2026-11-20 结构调整）：项目 = 清单文件，直接看清单视图。
+  // 旧菜单顺序里的 'project' key 会被 normalizeMenuViews 剔除。
 ];
 
 // 默认：全部显示，按当前顺序

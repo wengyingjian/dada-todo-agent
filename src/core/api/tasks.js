@@ -13,9 +13,10 @@ import {
   priorityRank, splitSummary
 } from '../composables/tasks-logic.js';
 import {
-  ARCHIVED_TAG, checklistNameError, frontmatterTags, yamlScalar
+  checklistNameError, frontmatterTags, yamlScalar
 } from '../composables/checklist-meta.js';
-import { pickArchiveFile, archiveNameRegex } from '../../project/archive.js';
+import { pickArchiveFile } from '../../project/archive.js';
+import { computeAutoArchiveTarget } from '../../project/auto-archive-path.js';
 
 let plugin = null;
 export function initTasksApi(p) { plugin = p; }
@@ -161,6 +162,30 @@ function checklistFolder() {
   const f = raw.trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^\/+|\/+$/g, '');
   if (f && f.split('/').some((seg) => seg === '.' || seg === '..')) return null;
   return f;
+}
+
+// 归档文件夹：<清单文件夹>/归档。已归档的清单文件放在这里（放进来即视为归档），
+// 清单视图 / 项目归属 / 自动归档扫描都跳过该文件夹。清单文件夹为库根时为 '归档'。
+export function archiveFolder() {
+  const f = checklistFolder();
+  if (f == null) return null;
+  return f ? `${f}/归档` : '归档';
+}
+
+// 清单文件夹的导出版（project 层取落点用），并导出清单标记列表（扫描用）
+export function checklistFolderPath(pluginRef) {
+  return checklistFolder();
+}
+export function checklistTagList(pluginRef) {
+  return checklistTags();
+}
+
+// 路径是否落在归档文件夹内（含本身等于归档文件夹）
+function inArchiveFolder(path) {
+  const a = archiveFolder();
+  if (!a) return false;
+  const p = String(path || '').replace(/\/+$/g, '');
+  return p === a || p.startsWith(a + '/');
 }
 
 // 收件箱文件不存在时创建（含 frontmatter），启动时调用
@@ -516,22 +541,20 @@ function listDailyFiles() {
 }
 
 // 全库扫描：frontmatter tags 含任一「清单标记」的 md 文件 → [{ key: 'cl:<相对路径>', path, name }]
-// 已归档（tags 含 archived）的清单一律不返回：清单 / 列表视图因此看不到它，
-// 其带日期任务也不再汇入默认聚合。文件本身仍是普通笔记，可随时手动去掉标签恢复。
-// 注意：tags 数组可能含 null 项（YAML 空值），匹配前先归一化为字符串
-// 与项目视图的识别口径一致：任务/（projectsRoot）下的文件不再被排除，
-// 带 todoList 标签的项目文件（task-*.md）会同时出现在清单视图与项目视图。
+// 已归档的清单不返回：落在归档文件夹（<清单文件夹>/归档）内即视为归档——清单 / 列表视图
+// 看不到它，其带日期任务也不再汇入默认聚合。文件本身仍是普通笔记，手动挪出即恢复。
+// 注意：tags 数组可能含 null 项（YAML 空值），匹配前先归一化为字符串。
 function checklistFileEntries() {
   const wanted = checklistTags();
   if (!wanted.length) return [];
   const mc = plugin.app.metadataCache;
   const out = [];
   for (const f of vault().getMarkdownFiles()) {
+    if (inArchiveFolder(f.path)) continue;
     const cache = mc.getFileCache(f);
     const fm = cache && cache.frontmatter;
     if (!fm) continue;
     const tags = frontmatterTags(fm.tags);
-    if (tags.includes(ARCHIVED_TAG)) continue;
     const hit = tags.some((x) => wanted.some((t) => x === t || x.indexOf(t + '/') === 0));
     if (!hit) continue;
     const rel = f.path.replace(/\.md$/i, '');
@@ -595,21 +618,29 @@ export async function createChecklist(name, opts = {}) {
   return res(201, { ok: true, key, path, item: { key, name: n, total: 0, done: 0 } });
 }
 
-// 归档 / 取消归档整份清单：在 frontmatter tags 中增删 archived 标签。
+// 归档 / 取消归档整份清单：搬到 / 挪出归档文件夹（<清单文件夹>/归档）。
 // 归档后 checklistFileEntries 不再返回该清单，清单 / 列表视图随之隐藏；
-// 取消归档只需再把标签去掉（当前 UI 只暴露归档入口，保留该能力便于恢复与测试）。
+// 取消归档 = 把文件挪回清单文件夹（同名占用时拒绝，不覆盖）。
 export async function setChecklistArchived(listKey, archived = true) {
   const path = taskFilePath(listKey);
   if (!path) return res(400, { ok: false, reason: 'bad_list' });
-  const f = vault().getAbstractFileByPath(path);
-  if (!(f instanceof TFile)) return res(404, { ok: false, reason: 'not_found' });
-  noteSelfWrite();
-  await plugin.app.fileManager.processFrontMatter(f, (fm) => {
-    const tags = frontmatterTags(fm.tags).filter((t) => t !== ARCHIVED_TAG);
-    if (archived) tags.push(ARCHIVED_TAG);
-    fm.tags = tags;
-  });
-  return res(200, { ok: true, archived: !!archived });
+  const a = archiveFolder();
+  if (!a) return res(400, { ok: false, reason: 'bad_folder' });
+  if (archived) {
+    if (inArchiveFolder(path)) return res(200, { ok: true, archived: true, path });
+    await ensureFolder(a);
+    const r = await renameListFile(path, `${a}/${path.split('/').pop()}`);
+    if (!r.ok) return res(r.reason === 'exists' ? 409 : 400, { ok: false, reason: r.reason || 'move_failed' });
+    return res(200, { ok: true, archived: true, path: r.path });
+  }
+  // 恢复：挪回清单文件夹根
+  if (!inArchiveFolder(path)) return res(200, { ok: true, archived: false, path });
+  const folder = checklistFolder() || '';
+  const name = path.split('/').pop();
+  const dst = folder ? `${folder}/${name}` : name;
+  const r = await renameListFile(path, dst);
+  if (!r.ok) return res(r.reason === 'exists' ? 409 : 400, { ok: false, reason: r.reason || 'move_failed' });
+  return res(200, { ok: true, archived: false, path: r.path });
 }
 
 // 读取单个清单，并按 ### 三级标题分组（清单文件支持用 ### 标题 作为分组分隔）。
@@ -731,8 +762,9 @@ export async function listSubtasks(parentGuid) {
 // 规则（docs/ideas/file-io-unification.md）：文件内「已完成」任务数超过阈值（默认 100）时，
 // 把最早的 N 条（默认 50）已完成任务整块搬到归档文件，保留最近的阈值内已完成供近期查看；
 // 24 小时内被修改过的文件强制跳过（刚在编辑的任务不动）。
-// 归档文件：清单目录下沿用 archive.js 的区间命名（task-<起>~<止>.md，前缀可由 opts 覆盖）。
-// 纯逻辑行处理 + 行级原语落盘，project 文件（task-*.md 也是清单）与普通清单共用。
+// 归档目标：<清单文件夹>/归档/<清单名>/归档-<清单名>-<日期>.md——每个清单一个同名子
+// 文件夹，避免多清单归档文件名互相打架；已有归档文件未满 100 条时就近追加。
+// 纯逻辑行处理 + 行级原语落盘，全部清单（含带 cwd 的项目清单）共用。
 
 // 从正文行中收集「已完成顶层任务块」：返回 [{ start, end }]（块含子任务与描述行）。
 // 与 project 层 taskBlocks 同口径：块边界是「下一个任意顶层任务行」（含未完成 / 取消），
@@ -756,15 +788,15 @@ function completedBlocks(lines) {
 //   threshold（默认 100）— 已完成数超过该值才触发
 //   keep（默认 50）— 保留最近 N 条已完成，其余（最早的）归档
 //   minFileAgeMs（默认 24h）— 文件 24h 内被修改过则整体跳过
-//   archivePrefix（默认 'task-'）— 归档文件名前缀
 // 返回 { ok, triggered, moved, archivePath?, reason? }
 export async function autoArchiveList(path, opts = {}) {
   const threshold = Number.isFinite(opts.threshold) ? opts.threshold : 100;
   const keep = Number.isFinite(opts.keep) ? opts.keep : 50;
   const minAgeMs = Number.isFinite(opts.minFileAgeMs) ? opts.minFileAgeMs : 24 * 3600 * 1000;
-  const prefix = String(opts.archivePrefix != null ? opts.archivePrefix : 'task-');
   const f = vault().getAbstractFileByPath(path);
   if (!(f instanceof TFile)) return { ok: false, triggered: false, moved: 0, reason: 'not_found' };
+  // 已在归档文件夹内的清单不再自动归档（它们已经被归档了）
+  if (inArchiveFolder(path)) return { ok: true, triggered: false, moved: 0, reason: 'archived' };
   // 24 小时内改过的文件不碰：mtime 走 adapter（vault 只读不写不产生缓存干扰）
   try {
     const stat = await vault().adapter.stat(f.path);
@@ -788,19 +820,19 @@ export async function autoArchiveList(path, opts = {}) {
   }
   const kept = doc.lines.filter((_, i) => !removed.has(i));
 
-  // 归档文件名：从搬入行抽日期扩宽现有区间（复用 project/archive.js 的纯逻辑，同目录就近）
+  // 归档目标：<清单文件夹>/归档/<清单名>/归档-<清单名>-<本批最早日期>.md；
+  // 同名归档文件未满 100 条时就近追加，满了换本批最新日期另开一份。
   const dates = movedLines.flatMap((l) => l.match(/\d{4}-\d{2}-\d{2}/g) || []);
   if (!dates.length) dates.push(new Date().toISOString().slice(0, 10));
-  const dir = path.split('/').slice(0, -1).join('/');
-  const re = archiveNameRegex(prefix);
+  const tgt = computeAutoArchiveTarget(path, dates);
   const siblings = [];
   for (const c of vault().getMarkdownFiles()) {
-    if (c.parent && c.parent.path === dir && c.path !== path && re.test(c.name)) {
+    if (c.parent && c.parent.path === tgt.dir && tgt.nameRegex.test(c.name)) {
       const sib = await readListDoc(c.path);
       if (sib) siblings.push({ path: c.path, lines: sib.lines });
     }
   }
-  const pick = pickArchiveFile(siblings, dates, dir, prefix);
+  const pick = pickArchiveFile(siblings, dates, tgt.dir, tgt.prefix);
   const archiveDoc = await readListDoc(pick.path);
   if (archiveDoc) {
     await writeListDoc(pick.path, archiveDoc.head, [...archiveDoc.lines, ...movedLines, '']);

@@ -57,12 +57,14 @@ test('resolveEditorCwd: 文件属于项目节点时用项目 cwd', () => {
   ];
   assert.equal(resolveEditorCwd('任务/web/子项目/项目信息.md', nodes, '/vault'), '/code/web/sub');
 });
-test('resolveEditorCwd: 目录型项目按路径前缀匹配，取最长', () => {
+test('resolveEditorCwd: 项目节点按 filePath 精确匹配（扁平索引）', () => {
   const nodes = [
-    { dirPath: '任务', filePath: '', cwd: '/code/a' },
-    { dirPath: '任务/web', filePath: '', cwd: '/code/web' },
+    { dirPath: '任务', filePath: '任务/web.md', cwd: '/code/web' },
+    { dirPath: '任务', filePath: '任务/a.md', cwd: '/code/a' },
   ];
-  assert.equal(resolveEditorCwd('任务/web/notes.md', nodes, '/vault'), '/code/web');
+  assert.equal(resolveEditorCwd('任务/web.md', nodes, '/vault'), '/code/web');
+  // 非项目文件（同目录其他文件）不匹配
+  assert.equal(resolveEditorCwd('任务/web/notes.md', nodes, '/vault'), '/vault');
 });
 test('resolveEditorCwd: 非项目文件回退仓库根', () => {
   const nodes = [{ dirPath: '任务', filePath: '', cwd: '/code/a' }];

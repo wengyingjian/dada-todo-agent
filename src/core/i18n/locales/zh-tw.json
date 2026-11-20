@@ -524,5 +524,10 @@
   "autoArchiveThreshold": "觸發閾值（已完成條數）",
   "autoArchiveThresholdDesc": "檔案內已完成任務超過該數量才觸發歸檔，預設 100。",
   "autoArchiveKeep": "保留最近已完成條數",
-  "autoArchiveKeepDesc": "觸發時保留最近 N 條已完成在原檔案（預設 50，近期可能還要查看），其餘更早的歸檔。"
+  "autoArchiveKeepDesc": "觸發時保留最近 N 條已完成在原檔案（預設 50，近期可能還要查看），其餘更早的歸檔。",
+  "projectCwd": "預設工作目錄",
+  "projectCwdDesc": "清單未單獨設定 cwd 時使用的工作目錄，也是委派給 T3 Code 時的預設執行位置。清單檔案 frontmatter 的 cwd 可覆蓋它。專案 = 清單資料夾裡的清單檔案（frontmatter type: project）。",
+  "groupProject": "專案與委派",
+  "checklistFolder": "清單資料夾",
+  "checklistFolderDesc": "清單檔案的存放資料夾（相對庫根目錄），預設「清單」。清單／專案／已歸檔清單（清單/歸檔/）都以這裡為根。"
 }

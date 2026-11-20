@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ARCHIVED_TAG, checklistNameError, frontmatterTags, hasFrontmatterTag, isArchivedTags, yamlScalar
+  checklistNameError, frontmatterTags, hasFrontmatterTag, yamlScalar
 } from './checklist-meta.js';
 
 test('清单名称校验：空名 / 非法字符 / 点开头结尾 / Windows 保留名 / 超长', () => {
@@ -27,12 +27,9 @@ test('frontmatter tags 归一化：数组过滤空值、字符串按逗号拆分
   assert.deepEqual(frontmatterTags(42), []);
 });
 
-test('归档判定：tags 含 archived（精确匹配）', () => {
-  assert.equal(ARCHIVED_TAG, 'archived');
-  assert.equal(isArchivedTags(['todoList', 'archived']), true);
-  assert.equal(isArchivedTags('archived'), true);
-  assert.equal(isArchivedTags(['archived-old']), false);
-  assert.equal(isArchivedTags(['todoList']), false);
+test('归档判定已迁移：不再用 frontmatter archived 标签（改落在归档文件夹内即归档）', () => {
+  // hasFrontmatterTag 仍是通用标签判定，清单识别用它
+  assert.equal(hasFrontmatterTag(['todoList'], 'todoList'), true);
   assert.equal(hasFrontmatterTag(['todoList/子项'], 'todoList'), false);
 });
 

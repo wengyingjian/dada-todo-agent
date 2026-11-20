@@ -35,12 +35,11 @@ test('空标题回退到首条用户消息', () => {
 
 test('归属：cwd 命中项目否则日记', () => {
   const idx = buildProjectIndex(
-    [{ path: '任务/工作' }, { path: '任务/工作/A' }],
     [
-      { path: '任务/工作/task-工作.md', frontmatter: { cwd: '/repos' } },
-      { path: '任务/工作/A/task-A.md', frontmatter: { cwd: '/repos/a' } }
+      { path: '清单/工作.md', frontmatter: { cwd: '/repos' } },
+      { path: '清单/A.md', frontmatter: { cwd: '/repos/a' } }
     ],
-    { root: '任务' }
+    { root: '清单' }
   );
   assert.equal(chooseOwner('/repos/a/src', idx.nodes).node.name, 'A');
   assert.equal(chooseOwner('/repos/other', idx.nodes).node.name, '工作');
@@ -56,7 +55,7 @@ test('mapThreadRow: 任一 run running 时状态覆盖为 running（agent-deck �
 
 // classifyWorkspace：只有 project / journal / ignored 三态，未记录默认 ignored
 test('归属分类：三态与默认忽略', () => {
-  const idx = buildProjectIndex([{ path: '任务/工作' }], [{ path: '任务/工作/task-工作.md', frontmatter: { cwd: '/repos' } }], { root: '任务' });
+  const idx = buildProjectIndex([{ path: '清单/工作.md', frontmatter: { cwd: '/repos' } }], { root: '清单' });
   // 没在任何列表 = 默认忽略（implicit 标记便于 UI 区分显式设置）
   const def = classifyWorkspace('/tmp/x', idx.nodes, [], []);
   assert.equal(def.type, 'ignored');
@@ -69,20 +68,20 @@ test('归属分类：三态与默认忽略', () => {
   // 同一前缀显式状态压过项目（切换状态时靠这条生效）
   assert.equal(classifyWorkspace('/repos/a', idx.nodes, ['/repos/a'], []).type, 'ignored');
   // 项目前缀更具体时项目胜出
-  const deep = buildProjectIndex([{ path: '任务/深' }], [{ path: '任务/深/task-深.md', frontmatter: { cwd: '/repos/a' } }], { root: '任务' });
+  const deep = buildProjectIndex([{ path: '清单/深.md', frontmatter: { cwd: '/repos/a' } }], { root: '清单' });
   assert.equal(classifyWorkspace('/repos/a/src', deep.nodes, ['/repos'], []).type, 'project');
   // 空 cwd 永远默认忽略
   assert.equal(classifyWorkspace('', idx.nodes, [], ['/tmp']).type, 'ignored');
 });
 
 test('归属分类：最长前缀胜出，三种状态可互相覆盖', () => {
-  const idx = buildProjectIndex([{ path: '任务/工作' }], [{ path: '任务/工作/task-工作.md', frontmatter: { cwd: '/repos' } }], { root: '任务' });
+  const idx = buildProjectIndex([{ path: '清单/工作.md', frontmatter: { cwd: '/repos' } }], { root: '清单' });
   // 父目录是项目，子目录显式设为日记 → 子目录按日记（更具体）
   assert.equal(classifyWorkspace('/repos/sub', idx.nodes, [], ['/repos/sub']).type, 'journal');
   // 子目录显式忽略同理
   assert.equal(classifyWorkspace('/repos/sub', idx.nodes, ['/repos/sub'], []).type, 'ignored');
   // 父目录日记、子目录是更具体的项目 → 子目录归项目
-  const deep = buildProjectIndex([{ path: '任务/深' }], [{ path: '任务/深/task-深.md', frontmatter: { cwd: '/repos/a' } }], { root: '任务' });
+  const deep = buildProjectIndex([{ path: '清单/深.md', frontmatter: { cwd: '/repos/a' } }], { root: '清单' });
   assert.equal(classifyWorkspace('/repos/a', deep.nodes, [], ['/repos']).type, 'project');
   // 同一前缀撞车：显式忽略 > 显式日记 > 自有项目 > 继承型项目。
   // 显式状态压过项目，切换状态时无需清空项目 cwd（切回项目直接清列表即可，不重复建目录）

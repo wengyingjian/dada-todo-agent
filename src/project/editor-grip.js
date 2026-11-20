@@ -2,7 +2,7 @@
 // 列表行判定、行文本提取、cwd 两级判定（项目节点 → 仓库根回退）。
 // CM6 注册（widget + modal）在 main.js，依赖 obsidian，不在此文件。
 
-import { normalizeCwd, isUnderRoot } from './index.js';
+import { normalizeCwd } from './index.js';
 
 // 光标所在行是不是可委派的列表项：-/*/+/1. 都算，带不带 checkbox 都算
 const LIST_LINE_RE = /^\s*(?:[-*+]|\d+[.)])\s/;
@@ -18,22 +18,13 @@ export function extractTaskText(raw) {
   return s.trim();
 }
 
-// cwd 两级判定：
-// 1) 文件路径能匹配到项目节点（dirPath 为文件路径前缀，取最长）→ 用该项目 cwd
+// cwd 两级判定（扁平索引版）：
+// 1) 文件路径就是某个项目节点（清单文件）本身 → 用该项目 cwd
 // 2) 匹配不到（或节点无 cwd）→ 回退仓库根
 export function resolveEditorCwd(filePath, nodes, vaultRoot) {
   const p = String(filePath || '');
-  let best = null;
-  for (const n of nodes || []) {
-    const dir = normalizeCwd(n.dirPath);
-    if (!dir || !normalizeCwd(n.cwd)) continue;
-    if (p === dir || p.startsWith(dir + '/')) {
-      if (!best || dir.length > normalizeCwd(best.dirPath).length) best = n;
-    }
-  }
-  if (best) return normalizeCwd(best.cwd);
+  const hit = (nodes || []).find((n) => n.filePath === p && normalizeCwd(n.cwd));
+  if (hit) return normalizeCwd(hit.cwd);
   return normalizeCwd(vaultRoot) || normalizeCwd(p.split('/').slice(0, -1).join('/'));
 }
 
-// 供 main.js 用的完整判定：这行能不能出现把手
-export { isUnderRoot };

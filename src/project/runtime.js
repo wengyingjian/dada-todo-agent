@@ -1,13 +1,16 @@
 // 项目任务运行时：把纯逻辑接到 Obsidian vault 与上游任务 API 上。
-import { TFile, TFolder } from 'obsidian';
+// 项目 = 一份清单文件（清单文件夹内、frontmatter 带 cwd），扁平无层级；
+// 归档清单 = 落在 <清单文件夹>/归档/ 内。旧的「项目根目录 + 目录树」结构已废除。
+import { TFile } from 'obsidian';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import {
-  buildProjectIndex, normalizeRoot, projectFilePath, normalizeCwd
+  buildProjectIndex, normalizeRoot, normalizeCwd
 } from './index.js';
-import { isArchiveFile, pickArchiveFile } from './archive.js';
+import { pickArchiveFile } from './archive.js';
+import { computeAutoArchiveTarget } from './auto-archive-path.js';
 import { extractDelegations, formatDelegationLine, parseDelegationLine, planDelegationInsert, T3_MARK } from './delegate-line.js';
 import { groupOfState, ensureGroupHeadings, groupOfLine, isTaskLine, groupBlockLineOf, shouldMoveToGroup } from './groups.js';
 import { locateSessionLine, rewriteSessionLine, stripSessionMark } from './session-line.js';
@@ -25,40 +28,37 @@ export function projectSettings(plugin) {
   return mergeProjectSettings(plugin.settings && plugin.settings.project);
 }
 
+// 清单文件夹（= 项目所在文件夹）。旧 projectsRoot 设置不再生效，统一跟随 checklistFolder。
 export function rootOf(plugin) {
-  return normalizeRoot(projectSettings(plugin).projectsRoot || '任务');
+  return normalizeRoot(API.checklistFolderPath(plugin) || '清单');
 }
 
 export function listKeyOf(filePath) {
   return 'cl:' + String(filePath).replace(/\.md$/i, '');
 }
 
+// 扫描全部清单文件（核心层已排除归档文件夹），建立扁平项目索引。
 export function scanProjects(plugin) {
-  const root = rootOf(plugin);
-  const vault = plugin.app.vault;
-  const dirs = [];
+  const cache = plugin.app.metadataCache;
   const files = [];
-  let all = [];
-  try { all = vault.getAllLoadedFiles(); } catch { all = []; }
-  for (const f of all) {
-    const p = f.path;
-    if (p !== root && !p.startsWith(root + '/')) continue;
-    if (f instanceof TFolder) {
-      if (p !== root) dirs.push({ path: p });
-    } else if (f instanceof TFile && /\.md$/i.test(p)) {
-      const cache = plugin.app.metadataCache.getFileCache(f);
-      files.push({ path: p, frontmatter: (cache && cache.frontmatter) || {} });
-    }
+  for (const f of plugin.app.vault.getMarkdownFiles()) {
+    const fm = (cache.getFileCache(f) || {}).frontmatter;
+    if (!fm) continue;
+    const tags = (Array.isArray(fm.tags) ? fm.tags : typeof fm.tags === 'string' ? fm.tags.split(',') : [])
+      .map((x) => String(x == null ? '' : x).trim()).filter(Boolean);
+    const wanted = API.checklistTagList(plugin);
+    if (!tags.some((x) => wanted.some((t) => x === t || x.indexOf(t + '/') === 0))) continue;
+    files.push({ path: f.path, frontmatter: fm });
   }
-  return buildProjectIndex(dirs, files, {
-    root,
+  return buildProjectIndex(files, {
+    root: rootOf(plugin),
     defaultCwd: projectSettings(plugin).projectDefaultCwd || ''
   });
 }
 
-export function nodeOf(plugin, dirPath) {
+export function nodeOf(plugin, filePath) {
   const idx = scanProjects(plugin);
-  return idx.byDir.get(dirPath) || null;
+  return idx.byPath.get(String(filePath).replace(/\/+$/g, '')) || null;
 }
 
 // 上游任务 API 统一返回 { status, body }；这里只关心 body
@@ -110,18 +110,15 @@ export async function loadDelegations(plugin, node) {
   return byParent;
 }
 
-// 项目文件 frontmatter（type: project + 清单标记 + status + cwd）——与清单文件共用
-// createListFile 单一出处，本模块不再维护第二套模板。
-const PROJECT_FM = (cwd) => ({ type: 'project', tags: [checklistTags()[0] || 'todoList'], status: 'active', cwd: cwd || undefined });
-
 export async function ensureProjectFile(plugin, node) {
   if (node.filePath) return node.filePath;
-  const path = projectFilePath(node.dirPath);
-  const cwd = normalizeCwd(node.ownCwd || '');
-  const r = await API.createListFile(path, PROJECT_FM(cwd));
+  const root = rootOf(plugin);
+  const name = String(node.name || '').trim() || '未命名项目';
+  const path = `${root ? root + '/' : ''}${name}.md`;
+  const r = await API.createChecklist(name, { dir: root, cwd: normalizeCwd(node.ownCwd || '') });
   if (!r.ok && r.reason !== 'exists') return null;
-  node.filePath = path;
-  return path;
+  node.filePath = r.path || path;
+  return node.filePath;
 }
 
 async function ensureFolder(plugin, folder) {
@@ -152,37 +149,26 @@ export async function editTask(plugin, task, patch) {
   return unwrap(await API.updateTask(task.guid, patch));
 }
 
-export async function createProject(plugin, parentDirPath, name) {
+// 新建项目 = 在清单文件夹建一份带 cwd 的清单文件（扁平，无子项目层级）。
+// parentDirPath 参数保留但忽略（旧调用兼容），统一落清单文件夹根。
+export async function createProject(plugin, _parentDirPath, name) {
   const n = String(name || '').trim();
   if (!n) return { ok: false, reason: 'empty' };
-  if (/[\\/:*?"<>|#^[\]]/.test(n)) return { ok: false, reason: 'bad_name' };
   const root = rootOf(plugin);
-  const base = parentDirPath || root;
-  const dir = `${base}/${n}`;
-  if (plugin.app.vault.getAbstractFileByPath(dir)) return { ok: false, reason: 'exists' };
-  await ensureFolder(plugin, dir);
-  const path = projectFilePath(dir);
-  const r = await API.createListFile(path, PROJECT_FM(''));
-  if (!r.ok && r.reason !== 'exists') return { ok: false, reason: r.reason || 'create_failed' };
-  return { ok: true, dirPath: dir, filePath: path };
+  const r = unwrap(await API.createChecklist(n, { dir: root }));
+  if (!r.ok) return { ok: false, reason: r.reason || 'create_failed' };
+  return { ok: true, dirPath: root, filePath: r.path, name: n };
 }
 
+// 重命名项目 = 重命名清单文件（文件名即项目名）。
 export async function renameProject(plugin, node, newName) {
   const n = String(newName || '').trim();
   if (!n) return { ok: false, reason: 'empty' };
-  if (/[\\/:*?"<>|#^[\]]/.test(n)) return { ok: false, reason: 'bad_name' };
-  const parent = node.dirPath.split('/').slice(0, -1).join('/');
-  const newDir = `${parent}/${n}`;
-  if (plugin.app.vault.getAbstractFileByPath(newDir)) return { ok: false, reason: 'exists' };
-  const folder = plugin.app.vault.getAbstractFileByPath(node.dirPath);
-  if (!(folder instanceof TFolder)) return { ok: false, reason: 'no_folder' };
-  await plugin.app.fileManager.renameFile(folder, newDir);
-  // task-*.md 重命名走核心原语（过自写标记与重名校验）
-  const oldPath = `${newDir}/task-${node.name}.md`;
-  if (plugin.app.vault.getAbstractFileByPath(oldPath)) {
-    await API.renameListFile(oldPath, `${newDir}/task-${n}.md`);
-  }
-  return { ok: true, dirPath: newDir };
+  const dir = node.dirPath || rootOf(plugin);
+  const newPath = `${dir}/${n}.md`;
+  const r = await API.renameListFile(node.filePath, newPath);
+  if (!r.ok) return { ok: false, reason: r.reason || 'rename_failed' };
+  return { ok: true, dirPath: dir, filePath: r.path };
 }
 
 export async function setProjectCwd(plugin, node, cwd) {
@@ -190,8 +176,7 @@ export async function setProjectCwd(plugin, node, cwd) {
   const v = normalizeCwd(cwd);
   const fm = await API.updateListFrontmatter(node.filePath, {
     cwd: v || undefined,
-    type: 'project',
-    tags: PROJECT_FM(v).tags
+    type: 'project'
   });
   if (!fm) return { ok: false };
   // 设置/修改项目 cwd = 明确选择「项目」：清掉该 cwd 的日记 / 忽略记录，避免显式列表覆盖项目
@@ -240,27 +225,24 @@ export async function archiveTasks(plugin, node, lineNos) {
   }
   const kept = lines.filter((_, i) => !removed.has(i));
 
-  const dir = node.dirPath;
-  const folder = plugin.app.vault.getAbstractFileByPath(dir);
-  const siblings = [];
-  if (folder instanceof TFolder) {
-    for (const child of folder.children) {
-      if (!(child instanceof TFile) || !/\.md$/i.test(child.path)) continue;
-      if (child.path === node.filePath) continue;
-      const sib = await API.readListDoc(child.path);
-      siblings.push({ path: child.path, lines: sib ? sib.lines : [] });
-    }
-  }
+  // 归档目标：<清单文件夹>/归档/<清单名>/task-<起>~<止>.md（与自动归档同一目录约定，
+  // 文件名保留旧的区间格式；满了自动另开一份）
   const dates = blocks
     .flatMap((b) => lines.slice(b.start, b.end))
     .flatMap((l) => l.match(/\d{4}-\d{2}-\d{2}/g) || []);
   if (!dates.length) dates.push(new Date().toISOString().slice(0, 10));
-
-  const pick = pickArchiveFile(siblings, dates, node.dirPath);
+  const tgt = computeAutoArchiveTarget(node.filePath, dates);
+  const siblings = [];
+  for (const c of plugin.app.vault.getMarkdownFiles()) {
+    if (c.parent && c.parent.path === tgt.dir && tgt.nameRegex.test(c.name)) {
+      const sib = await API.readListDoc(c.path);
+      siblings.push({ path: c.path, lines: sib ? sib.lines : [] });
+    }
+  }
+  const pick = pickArchiveFile(siblings, dates, tgt.dir, tgt.prefix);
   const archiveDoc = await API.readListDoc(pick.path);
   if (archiveDoc) {
     // 追加到归档文件末尾：原内容去尾随空白 + 空行分隔 + 搬入块 + 结尾换行
-    // （等价于旧实现的 `raw.replace(/\s+$/,'') + '\n\n' + moved + '\n'`，lines 末尾空串即结尾换行）
     await API.writeListDoc(pick.path, archiveDoc.head,
       [...trimTrailingBlank(archiveDoc.lines), '', ...movedLines, '']);
   } else {
@@ -275,15 +257,6 @@ function trimTrailingBlank(lines) {
   const out = (lines || []).slice();
   while (out.length && !String(out[out.length - 1] || '').trim()) out.pop();
   return out;
-}
-
-export async function listArchives(plugin, node) {
-  const folder = plugin.app.vault.getAbstractFileByPath(node.dirPath);
-  if (!(folder instanceof TFolder)) return [];
-  return folder.children
-    .filter((c) => c instanceof TFile && isArchiveFile(c.path))
-    .map((c) => ({ path: c.path, name: c.name }))
-    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // ---------- 委派子行写入 ----------
@@ -1027,12 +1000,13 @@ export async function importAndMoveForNode(plugin, node, opts = {}) {
 export async function createProjectWithCwd(plugin, name, cwd, opts = {}) {
   const root = rootOf(plugin);
   const base = String(name || '').trim() || '未命名项目';
-  let dirPath = `${root}/${base}`;
-  for (let i = 2; plugin.app.vault.getAbstractFileByPath(dirPath); i++) dirPath = `${root}/${base}-${i}`;
-  const finalName = dirPath.split('/').pop();
+  let finalName = base;
+  for (let i = 2; plugin.app.vault.getAbstractFileByPath(`${root ? root + '/' : ''}${finalName}.md`); i++) {
+    finalName = `${base}-${i}`;
+  }
   const r = await createProject(plugin, '', finalName);
   if (!r || !r.ok) return r;
-  const node = nodeOf(plugin, r.dirPath);
+  const node = nodeOf(plugin, r.filePath);
   if (!node) return { ok: false, reason: 'no_node' };
   const cw = await setProjectCwd(plugin, node, cwd);
   if (!cw || !cw.ok) return { ok: false, reason: 'cwd_failed' };

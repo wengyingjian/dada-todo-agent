@@ -1,103 +1,74 @@
+// 项目索引层（扁平版）单测：项目 = 一份清单文件，平铺无层级，cwd 不继承（无父级可继承）。
+// 规格基准：docs/ideas/file-io-unification.md 与 2026-11-20 结构调整决定。
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  buildProjectIndex, matchProjectByCwd, projectDirOf, projectFilePath, normalizeRoot
-} from './index.js';
+import { buildProjectIndex, matchProjectByCwd, normalizeRoot } from './index.js';
 
-const ROOT = '任务';
-
-test('识别项目文件并与目录同名', () => {
-  assert.equal(projectDirOf('任务/工作/task-工作.md', ROOT), '任务/工作');
-  assert.equal(projectDirOf('任务/工作/LoopForge/task-LoopForge.md', ROOT), '任务/工作/LoopForge');
-  assert.equal(projectDirOf('任务/工作/其它.md', ROOT), null);
-  assert.equal(projectDirOf('任务/工作/task-别的名字.md', ROOT), null);
-  assert.equal(projectFilePath('任务/工作/LoopForge'), '任务/工作/LoopForge/task-LoopForge.md');
-});
-
-test('构建层级：父项目与子项目', () => {
+test('项目即清单文件：每个文件一个节点，dirPath 为所在文件夹', () => {
   const idx = buildProjectIndex(
-    [{ path: '任务/工作' }, { path: '任务/工作/LoopForge' }],
     [
-      { path: '任务/工作/task-工作.md', frontmatter: { type: 'project' } },
-      { path: '任务/工作/LoopForge/task-LoopForge.md', frontmatter: { type: 'project' } }
+      { path: '清单/工作.md', frontmatter: { cwd: '/repos/work' } },
+      { path: '清单/子目录/侧项目.md', frontmatter: { cwd: '/repos/side' } }
     ],
-    { root: ROOT }
+    { root: '清单' }
   );
-  assert.equal(idx.roots.length, 1);
-  assert.equal(idx.roots[0].name, '工作');
-  assert.equal(idx.roots[0].children.length, 1);
-  assert.equal(idx.roots[0].children[0].name, 'LoopForge');
-  assert.equal(idx.roots[0].children[0].depth, 2);
+  assert.equal(idx.nodes.length, 2);
+  const work = idx.byPath.get('清单/工作.md');
+  assert.equal(work.name, '工作');
+  assert.equal(work.filePath, '清单/工作.md');
+  assert.equal(work.dirPath, '清单'); // 兼容旧字段：文件所在文件夹
+  assert.equal(work.cwd, '/repos/work');
+  assert.equal(work.depth, 1);
+  assert.deepEqual(work.children, []);
 });
 
-test('目录即项目：没有项目文件的目录也存在', () => {
+test('frontmatter cwd 缺失时用默认 cwd，无默认则为空', () => {
   const idx = buildProjectIndex(
-    [{ path: '任务/空项目' }],
-    [],
-    { root: ROOT }
+    [{ path: '清单/A.md', frontmatter: {} }],
+    { root: '清单', defaultCwd: '/fallback' }
   );
-  assert.equal(idx.nodes.length, 1);
-  assert.equal(idx.nodes[0].filePath, '');
+  assert.equal(idx.nodes[0].cwd, '/fallback');
+  assert.equal(idx.nodes[0].ownCwd, '');
+  const none = buildProjectIndex([{ path: '清单/A.md', frontmatter: {} }], { root: '清单' });
+  assert.equal(none.nodes[0].cwd, '');
 });
 
-test('cwd 继承父级并可覆盖', () => {
+test('排序：sort 优先，其次名称（zh-Hans-CN）', () => {
   const idx = buildProjectIndex(
-    [{ path: '任务/工作' }, { path: '任务/工作/A' }, { path: '任务/工作/B' }],
     [
-      { path: '任务/工作/task-工作.md', frontmatter: { cwd: '/repos/company' } },
-      { path: '任务/工作/A/task-A.md', frontmatter: {} },
-      { path: '任务/工作/B/task-B.md', frontmatter: { cwd: '/repos/b' } }
+      { path: '清单/a.md', frontmatter: { sort: 20 } },
+      { path: '清单/b.md', frontmatter: { sort: 5 } },
+      { path: '清单/c.md', frontmatter: {} }
     ],
-    { root: ROOT, defaultCwd: '/fallback' }
-  );
-  const work = idx.byDir.get('任务/工作');
-  assert.equal(work.cwd, '/repos/company');
-  assert.equal(idx.byDir.get('任务/工作/A').cwd, '/repos/company');
-  assert.equal(idx.byDir.get('任务/工作/B').cwd, '/repos/b');
-});
-
-test('无 cwd 时用默认值', () => {
-  const idx = buildProjectIndex([{ path: '任务/X' }], [], { root: ROOT, defaultCwd: '/default' });
-  assert.equal(idx.byDir.get('任务/X').cwd, '/default');
-});
-
-test('排序：sort 优先，其次名称', () => {
-  const idx = buildProjectIndex(
-    [{ path: '任务/a' }, { path: '任务/b' }, { path: '任务/c' }],
-    [
-      { path: '任务/a/task-a.md', frontmatter: { sort: 20 } },
-      { path: '任务/b/task-b.md', frontmatter: { sort: 5 } },
-      { path: '任务/c/task-c.md', frontmatter: {} }
-    ],
-    { root: ROOT }
+    { root: '清单' }
   );
   assert.deepEqual(idx.roots.map((n) => n.name), ['b', 'a', 'c']);
 });
 
-test('忽略隐藏目录与根本身', () => {
+test('cwd 归属取最长匹配，不命中返回 null', () => {
   const idx = buildProjectIndex(
-    [{ path: '任务/.trash' }, { path: '任务' }, { path: '其它/x' }],
-    [],
-    { root: ROOT }
-  );
-  assert.equal(idx.nodes.length, 0);
-});
-
-test('cwd 归属取最长匹配', () => {
-  const idx = buildProjectIndex(
-    [{ path: '任务/工作' }, { path: '任务/工作/子' }],
     [
-      { path: '任务/工作/task-工作.md', frontmatter: { cwd: '/repos' } },
-      { path: '任务/工作/子/task-子.md', frontmatter: { cwd: '/repos/sub' } }
+      { path: '清单/工作.md', frontmatter: { cwd: '/repos' } },
+      { path: '清单/子.md', frontmatter: { cwd: '/repos/sub' } }
     ],
-    { root: ROOT }
+    { root: '清单' }
   );
   assert.equal(matchProjectByCwd('/repos/sub/x', idx.nodes).name, '子');
   assert.equal(matchProjectByCwd('/repos/other', idx.nodes).name, '工作');
   assert.equal(matchProjectByCwd('/elsewhere', idx.nodes), null);
+  assert.equal(matchProjectByCwd('', idx.nodes), null);
+});
+
+test('忽略非 md 与空路径条目', () => {
+  const idx = buildProjectIndex(
+    [{ path: '清单/A.md', frontmatter: {} }, { path: '清单/B.txt', frontmatter: {} }, { path: '', frontmatter: {} }],
+    { root: '清单' }
+  );
+  assert.equal(idx.nodes.length, 1);
 });
 
 test('normalizeRoot 去首尾斜杠', () => {
-  assert.equal(normalizeRoot(' /任务/ '), '任务');
-  assert.equal(normalizeRoot('任务//子'), '任务/子');
+  assert.equal(normalizeRoot(' /清单/ '), '清单');
+  assert.equal(normalizeRoot('清单//子'), '清单/子');
 });

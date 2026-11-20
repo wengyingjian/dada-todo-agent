@@ -530,5 +530,10 @@
   "autoArchiveThreshold": "触发阈值（已完成条数）",
   "autoArchiveThresholdDesc": "文件内已完成任务超过该数量才触发归档，默认 100。",
   "autoArchiveKeep": "保留最近已完成条数",
-  "autoArchiveKeepDesc": "触发时保留最近 N 条已完成在原文件（默认 50，近期可能还要查看），其余更早的归档。"
+  "autoArchiveKeepDesc": "触发时保留最近 N 条已完成在原文件（默认 50，近期可能还要查看），其余更早的归档。",
+  "projectCwd": "默认工作目录",
+  "projectCwdDesc": "清单未单独设置 cwd 时使用的工作目录，也是委派给 T3 Code 时的默认执行位置。清单文件 frontmatter 的 cwd 可覆盖它。项目 = 清单文件夹里的清单文件（frontmatter type: project）。",
+  "groupProject": "项目与委派",
+  "checklistFolder": "清单文件夹",
+  "checklistFolderDesc": "清单文件的存放文件夹（相对库根目录），默认「清单」。清单 / 项目 / 已归档清单（清单/归档/）都以这里为根。"
 }

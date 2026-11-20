@@ -530,5 +530,10 @@
   "autoArchiveThreshold": "Trigger threshold (done tasks)",
   "autoArchiveThresholdDesc": "Archive only when a file has more than this many completed tasks. Default 100.",
   "autoArchiveKeep": "Keep recent done tasks",
-  "autoArchiveKeepDesc": "When triggered, keep the most recent N completed tasks in place (default 50); older ones are archived."
+  "autoArchiveKeepDesc": "When triggered, keep the most recent N completed tasks in place (default 50); older ones are archived.",
+  "projectCwd": "Default working directory",
+  "projectCwdDesc": "Used when a checklist has no cwd of its own, and as the default location for T3 Code delegations. A checklist file's frontmatter cwd overrides it. A project = a checklist file inside the checklists folder (frontmatter type: project).",
+  "groupProject": "Projects & Delegation",
+  "checklistFolder": "Checklists folder",
+  "checklistFolderDesc": "Folder where checklist files live (relative to the vault root), default \"清单\". Checklists, projects, and archived checklists (清单/归档/) all live under it."
 }

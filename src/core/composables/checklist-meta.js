@@ -1,9 +1,7 @@
-// 清单文件的纯逻辑：名称校验、frontmatter 标签归一化、归档标记。
+// 清单文件的纯逻辑：名称校验、frontmatter 标签归一化。
 // 无 Obsidian / i18n 依赖，Node 下可直接单测。
-
-// 归档标记：清单文件 frontmatter tags 含该标签即视为已归档，清单 / 列表视图不再展示。
-// 与项目视图的「归档任务」（archive.js，把任务搬到归档文件）无关，这里只归档整份清单。
-export const ARCHIVED_TAG = 'archived';
+// 归档语义已改为「文件落在归档文件夹内即归档」（见 api/tasks.js 的 archiveFolder），
+// 不再用 frontmatter archived 标签。
 
 // 新建清单的名称校验（弹窗与数据层共用同一份规则，避免两处正则漂移）。
 // 合法返回 ''，否则返回原因码：'missing_name'（空）| 'bad_name'（文件名不可用）。
@@ -35,11 +33,6 @@ export function frontmatterTags(raw) {
 // tags 中是否含指定标签（精确匹配；清单识别另支持 `todoList/xxx` 前缀语义）
 export function hasFrontmatterTag(raw, tag) {
   return frontmatterTags(raw).includes(tag);
-}
-
-// 是否已归档：frontmatter tags 含 archived
-export function isArchivedTags(raw) {
-  return hasFrontmatterTag(raw, ARCHIVED_TAG);
 }
 
 // 写 frontmatter 用的 YAML 标量：
