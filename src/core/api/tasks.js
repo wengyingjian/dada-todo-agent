@@ -363,6 +363,40 @@ async function readTasks(path, dateKey) {
   return { head, lines: parsed.lines, roots: parsed.roots };
 }
 
+// ---------- 清单文件写锁 ----------
+// vault.modify 是「整体覆盖写」，读-改-写之间没有原子性：两路（如定时反向同步与
+// 手动导入）交错 RMW 时会互相覆盖、重复插入同一会话行（清单重复任务 bug 的根因）。
+// 收口：所有清单类文件的读-改-写统一走 withListDoc —— 按 path 串行排队，
+// mutate 在锁内拿最新内容、算出新的行数组、立即落盘，排队期间不会被别的路插队。
+// readListDoc / writeListDoc 保留原样（读不进锁；整体覆盖写仍允许，但新代码
+// 应一律用 withListDoc 组合而不是「先 read 后 write」两段式）。
+import { createKeyedMutex } from '../composables/concurrency.js';
+const listMutex = createKeyedMutex();
+
+// 原子读-改-写：fn 在锁内收到 { head, lines }，返回 null 表示放弃写；
+// 返回 { head?, lines }（head 省略则沿用原 head）即整体落盘。
+// fn 抛错视作本次操作失败，不落盘，错误继续上抛。
+// 返回 fn 的返回值（补上 path）；文件不存在时 fn 收到 null，可自行建文件（writeTasks 会补父目录）。
+// ⚠ 不可重入：锁内代码（withListDoc 的 fn / createChecklistTask 等）不得再调用任何
+//   带锁出口（insertListLines / replaceListLines / removeListLines / writeListDoc /
+//   withListDoc / createChecklistTask / moveChecklistTask）——重入调用会立即抛
+//   reentrant_list_lock 错（宁可炸得响，不要悄悄挂死）。复合操作写进同一个 fn 一次完成。
+const heldPaths = new Set();
+function assertNotHeld(path) {
+  if (heldPaths.has(path)) {
+    throw new Error('reentrant_list_lock: ' + path + ' — 锁内不得再调带锁出口，复合逻辑请写进同一个 fn');
+  }
+}
+export function withListDoc(path, fn) {
+  return withListLock(path, async () => {
+    const doc = await readListDoc(path);
+    const out = await fn(doc);
+    if (!out || !Array.isArray(out.lines)) return out;
+    await writeTasks(path, out.head != null ? out.head : (doc ? doc.head : ''), out.lines);
+    return Object.assign({}, out, { path });
+  });
+}
+
 async function writeTasks(path, head, lines) {
   const v = vault();
   const file = v.getAbstractFileByPath(path);
@@ -393,47 +427,73 @@ export async function readListDoc(path) {
 }
 
 // 整体落盘（modify 或 create；创建时自动补父文件夹）。
+// 带写锁：与 withListDoc 的 RMW 互斥，排队执行，避免与排队中的 RMW 交错。
 export async function writeListDoc(path, head, lines) {
-  noteSelfWrite();
-  await writeTasks(path, head, lines);
+  return withListLock(path, async () => {
+    noteSelfWrite();
+    await writeTasks(path, head, lines);
+  });
+}
+
+// 带锁出口的统一包装：重入守卫 + 锁内执行 + heldPaths 登记。
+// 所有走 listMutex 的出口都从这里过，保证重入检测无遗漏。
+function withListLock(path, fn) {
+  assertNotHeld(path);
+  return listMutex.run(path, async () => {
+    heldPaths.add(path);
+    try {
+      return await fn();
+    } finally {
+      heldPaths.delete(path);
+    }
+  });
 }
 
 // 在正文某行之后插入若干行（afterLineNo = -1 或省略 → 插在最开头）。
-// 返回插入起始行号；文件不存在返回 null。
+// 返回插入起始行号；文件不存在返回 null。原子 RMW：读、算、写在同一把 path 锁内。
 export async function insertListLines(path, afterLineNo, newLines) {
-  const doc = await readListDoc(path);
-  if (!doc) return null;
-  const at = Number.isInteger(afterLineNo) && afterLineNo >= 0
-    ? Math.min(afterLineNo + 1, doc.lines.length)
-    : 0;
-  const lines = doc.lines.slice();
-  lines.splice(at, 0, ...newLines);
-  await writeListDoc(path, doc.head, lines);
-  return at;
+  return withListLock(path, async () => {
+    const doc = await readListDoc(path);
+    if (!doc) return null;
+    const at = Number.isInteger(afterLineNo) && afterLineNo >= 0
+      ? Math.min(afterLineNo + 1, doc.lines.length)
+      : 0;
+    const lines = doc.lines.slice();
+    lines.splice(at, 0, ...newLines);
+    noteSelfWrite();
+    await writeTasks(path, doc.head, lines);
+    return at;
+  });
 }
 
 // 把第 lineNo 行替换为若干行（patchLines 可为空串元素以外的任意行数组）。
-// 返回 { lineNo }（替换后首行位置）；文件或行不存在返回 null。
+// 返回 { lineNo }（替换后首行位置）；文件或行不存在返回 null。原子 RMW。
 export async function replaceListLines(path, lineNo, patchLines) {
-  const doc = await readListDoc(path);
-  if (!doc) return null;
-  if (!(lineNo >= 0 && lineNo < doc.lines.length)) return null;
-  const lines = doc.lines.slice();
-  lines.splice(lineNo, 1, ...patchLines);
-  await writeListDoc(path, doc.head, lines);
-  return { lineNo };
+  return withListLock(path, async () => {
+    const doc = await readListDoc(path);
+    if (!doc) return null;
+    if (!(lineNo >= 0 && lineNo < doc.lines.length)) return null;
+    const lines = doc.lines.slice();
+    lines.splice(lineNo, 1, ...patchLines);
+    noteSelfWrite();
+    await writeTasks(path, doc.head, lines);
+    return { lineNo };
+  });
 }
 
-// 删除正文行区间 [from, to]（含端点）。返回删除的行数；文件不存在返回 null。
+// 删除正文行区间 [from, to]（含端点）。返回删除的行数；文件不存在返回 null。原子 RMW。
 export async function removeListLines(path, from, to) {
-  const doc = await readListDoc(path);
-  if (!doc) return null;
-  const a = Math.max(0, from), b = Math.min(to, doc.lines.length - 1);
-  if (a > b) return 0;
-  const lines = doc.lines.slice();
-  lines.splice(a, b - a + 1);
-  await writeListDoc(path, doc.head, lines);
-  return b - a + 1;
+  return withListLock(path, async () => {
+    const doc = await readListDoc(path);
+    if (!doc) return 0;
+    const a = Math.max(0, from), b = Math.min(to, doc.lines.length - 1);
+    if (a > b) return 0;
+    const lines = doc.lines.slice();
+    lines.splice(a, b - a + 1);
+    noteSelfWrite();
+    await writeTasks(path, doc.head, lines);
+    return b - a + 1;
+  });
 }
 
 // 更新清单 frontmatter（保留其余字段）：patch 对象写值，undefined 值删字段。
@@ -889,20 +949,22 @@ export async function createTask(task) {
   if (!path) return res(400, { ok: false, reason: 'bad_date' });
   // 先确保文件存在：日记走 Obsidian 原生创建以套用日记模板（如已配置），其余用默认 frontmatter
   await ensureTaskFile(dateKey, path);
-  const doc = await readTasks(path, dateKey);
-  const node = nodeFromTask(t, dateKey, { addDoneDate: addDoneDateEnabled() });
-  if (listKey) {
-    // 清单：行内标记日期，文件不变
-    if (t.dueAt) node.due = todayKey(Number(t.dueAt));
-    if (t.startAt) node.start = todayKey(Number(t.startAt));
-  } else {
-    // 日记：文件名=开始日；结束日 > 开始日时写行内 📅，🛫 无需（文件即开始日）
-    node.start = '';
-    node.due = (t.dueAt != null && todayKey(Number(t.dueAt)) > dateKey) ? todayKey(Number(t.dueAt)) : '';
-  }
-  const { out, lineNo } = appendLines(doc.lines, node, '');
-  await writeTasks(path, doc.head, out);
-  return res(201, { ok: true, task: recordOf(dateKey, Object.assign({}, node, { lineNo }), { file: path }) });
+  return withListLock(path, async () => {
+    const doc = await readTasks(path, dateKey);
+    const node = nodeFromTask(t, dateKey, { addDoneDate: addDoneDateEnabled() });
+    if (listKey) {
+      // 清单：行内标记日期，文件不变
+      if (t.dueAt) node.due = todayKey(Number(t.dueAt));
+      if (t.startAt) node.start = todayKey(Number(t.startAt));
+    } else {
+      // 日记：文件名=开始日；结束日 > 开始日时写行内 📅，🛫 无需（文件即开始日）
+      node.start = '';
+      node.due = (t.dueAt != null && todayKey(Number(t.dueAt)) > dateKey) ? todayKey(Number(t.dueAt)) : '';
+    }
+    const { out, lineNo } = appendLines(doc.lines, node, '');
+    await writeTasks(path, doc.head, out);
+    return res(201, { ok: true, task: recordOf(dateKey, Object.assign({}, node, { lineNo }), { file: path }) });
+  });
 }
 
 // 在清单指定分组的最后一行追加任务。
@@ -916,39 +978,49 @@ export async function createChecklistTask(listKey, groupTitle, task) {
   const path = taskFilePath(listKey);
   if (!path) return res(400, { ok: false, reason: 'bad_list' });
   await ensureTaskFile(listKey, path);
-  const doc = await readTasks(path, listKey);
-  const node = nodeFromTask(t, listKey, { addDoneDate: addDoneDateEnabled() });
-  if (t.dueAt) node.due = todayKey(Number(t.dueAt));
-  if (t.startAt) node.start = todayKey(Number(t.startAt));
-  const newLine = serializeTaskLine(node, '');
+  // 锁内原子 RMW：读、算插入位置、落盘一气呵成（反向同步与导入并发时不重复插行）。
+  // opts.dedupeMark：传入会话标记串（如 '⚡ t3:<id>'）时，锁内先扫正文，已有该标记
+  // 的任务行则返回 { ok:false, reason:'duplicate' }——查重与插入在同一原子段，
+  // 消除「先查后建」两段式中间被并发插入的竞态窗口。
+  const dedupeMark = String((t && t.dedupeMark) || '');
+  return withListLock(path, async () => {
+    const doc = await readTasks(path, listKey);
+    if (dedupeMark && doc.lines.some((l) => l.includes(dedupeMark))) {
+      return res(200, { ok: false, reason: 'duplicate' });
+    }
+    const node = nodeFromTask(t, listKey, { addDoneDate: addDoneDateEnabled() });
+    if (t.dueAt) node.due = todayKey(Number(t.dueAt));
+    if (t.startAt) node.start = todayKey(Number(t.startAt));
+    const newLine = serializeTaskLine(node, '');
 
-  const headings = [];
-  doc.lines.forEach((line, idx) => {
-    const m = /^###\s+(.+?)\s*$/.exec(line);
-    if (m) headings.push({ idx, title: m[1].trim() });
+    const headings = [];
+    doc.lines.forEach((line, idx) => {
+      const m = /^###\s+(.+?)\s*$/.exec(line);
+      if (m) headings.push({ idx, title: m[1].trim() });
+    });
+
+    let insertAt;
+    if (!groupTitle) {
+      // 未分组新建：插到文件最开头（frontmatter 之后的正文第一行）。清单文件常有 ###
+      // 标题，追加到末尾会归入最后一个分组；放最开头则保证落在所有标题之前（未分组区）。
+      insertAt = 0;
+    } else {
+      const h = headings.find((x) => x.title === groupTitle);
+      if (!h) return res(404, { ok: false, reason: 'group_not_found' });
+      // 插到组内最后一个非空行之后：组尾空行（分隔下一组用的）不参与，
+      // 否则新任务会落在组标题下方的空行之后，看起来中间空了一行。
+      const next = headings.find((x) => x.idx > h.idx);
+      const end = next ? next.idx : doc.lines.length;
+      insertAt = end;
+      while (insertAt > h.idx + 1 && !String(doc.lines[insertAt - 1] || '').trim()) insertAt--;
+    }
+
+    const lines = doc.lines.slice();
+    lines.splice(insertAt, 0, newLine);
+    await writeTasks(path, doc.head, lines);
+    const created = Object.assign({}, node, { lineNo: insertAt });
+    return res(201, { ok: true, task: recordOf(listKey, created) });
   });
-
-  let insertAt;
-  if (!groupTitle) {
-    // 未分组新建：插到文件最开头（frontmatter 之后的正文第一行）。清单文件常有 ###
-    // 标题，追加到末尾会归入最后一个分组；放最开头则保证落在所有标题之前（未分组区）。
-    insertAt = 0;
-  } else {
-    const h = headings.find((x) => x.title === groupTitle);
-    if (!h) return res(404, { ok: false, reason: 'group_not_found' });
-    // 插到组内最后一个非空行之后：组尾空行（分隔下一组用的）不参与，
-    // 否则新任务会落在组标题下方的空行之后，看起来中间空了一行。
-    const next = headings.find((x) => x.idx > h.idx);
-    const end = next ? next.idx : doc.lines.length;
-    insertAt = end;
-    while (insertAt > h.idx + 1 && !String(doc.lines[insertAt - 1] || '').trim()) insertAt--;
-  }
-
-  const lines = doc.lines.slice();
-  lines.splice(insertAt, 0, newLine);
-  await writeTasks(path, doc.head, lines);
-  const created = Object.assign({}, node, { lineNo: insertAt });
-  return res(201, { ok: true, task: recordOf(listKey, created) });
 }
 
 // 将清单内任务移动到另一个分组（同文件内移动整块：删旧块 + 插入到目标分组末尾）。
@@ -961,36 +1033,39 @@ export async function moveChecklistTask(listKey, guid, targetGroupTitle) {
   if (!isListKey(listKey)) return res(400, { ok: false, reason: 'bad_list' });
   const path = taskFilePath(listKey);
   if (!path) return res(400, { ok: false, reason: 'bad_list' });
-  const doc = await readTasks(path, listKey);
-  const node = locateNode(doc.roots, { lineNo: g.lineNo });
-  if (!node) return res(404, { ok: false, reason: 'not_found' });
+  // 锁内原子 RMW（搬组与反向同步并发时行号不再互相踩踏）
+  return withListLock(path, async () => {
+    const doc = await readTasks(path, listKey);
+    const node = locateNode(doc.roots, { lineNo: g.lineNo });
+    if (!node) return res(404, { ok: false, reason: 'not_found' });
 
-  // 删除原任务整块（含描述行与子任务）
-  const removed = new Set(collectLineNos(node));
-  const keep = doc.lines.filter((_, i) => !removed.has(i));
+    // 删除原任务整块（含描述行与子任务）
+    const removed = new Set(collectLineNos(node));
+    const keep = doc.lines.filter((_, i) => !removed.has(i));
 
-  // 计算目标插入位置（与 createChecklistTask 同规则）
-  const headings = [];
-  keep.forEach((line, idx) => {
-    const m = /^###\s+(.+?)\s*$/.exec(line);
-    if (m) headings.push({ idx, title: m[1].trim() });
+    // 计算目标插入位置（与 createChecklistTask 同规则）
+    const headings = [];
+    keep.forEach((line, idx) => {
+      const m = /^###\s+(.+?)\s*$/.exec(line);
+      if (m) headings.push({ idx, title: m[1].trim() });
+    });
+    let insertAt;
+    if (!targetGroupTitle) {
+      insertAt = headings.length ? headings[0].idx : keep.length;
+    } else {
+      const h = headings.find((x) => x.title === targetGroupTitle);
+      if (!h) return res(404, { ok: false, reason: 'group_not_found' });
+      // 与 createChecklistTask 同规则：插到组内最后一个非空行之后，跳过组尾分隔空行
+      const next = headings.find((x) => x.idx > h.idx);
+      const end = next ? next.idx : keep.length;
+      insertAt = end;
+      while (insertAt > h.idx + 1 && !String(keep[insertAt - 1] || '').trim()) insertAt--;
+    }
+
+    keep.splice(insertAt, 0, ...serializeBlock(node, node.indentStr));
+    await writeTasks(path, doc.head, keep);
+    return res(200, { ok: true, task: recordOf(listKey, node) });
   });
-  let insertAt;
-  if (!targetGroupTitle) {
-    insertAt = headings.length ? headings[0].idx : keep.length;
-  } else {
-    const h = headings.find((x) => x.title === targetGroupTitle);
-    if (!h) return res(404, { ok: false, reason: 'group_not_found' });
-    // 与 createChecklistTask 同规则：插到组内最后一个非空行之后，跳过组尾分隔空行
-    const next = headings.find((x) => x.idx > h.idx);
-    const end = next ? next.idx : keep.length;
-    insertAt = end;
-    while (insertAt > h.idx + 1 && !String(keep[insertAt - 1] || '').trim()) insertAt--;
-  }
-
-  keep.splice(insertAt, 0, ...serializeBlock(node, node.indentStr));
-  await writeTasks(path, doc.head, keep);
-  return res(200, { ok: true, task: recordOf(listKey, node) });
 }
 
 // 将任务整块移动到另一份清单（跨文件）：目标为 cl: 键时插到该清单文件末尾；

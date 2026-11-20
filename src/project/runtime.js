@@ -25,6 +25,8 @@ import { replaceSummaryInLines, locateDelegationLine } from './summarize-apply.j
 import { DEFAULT_SETTINGS, mergeProjectSettings } from './settings.js';
 import * as API from '../core/api/tasks.js';
 
+import { createSingleFlight, createBusyFlag } from '../core/composables/concurrency.js';
+
 export { DEFAULT_SETTINGS };
 
 export function projectSettings(plugin) {
@@ -490,8 +492,13 @@ function matchPending(pending, thread) {
 // 同步新建单级任务：一级任务行（标题已含时间/日期）+ 行尾标记，下方跟分点描述。
 // 会话不是委派出去的，没有父任务可挂，所以不再建「父任务 + 委派子行」两级；
 // 行尾的 ⚡ t3: 标记就是后续同步认出它的唯一凭据。
+// 去重走 createChecklistTask 的 dedupeMark（锁内查重 + 插入同一原子段）：文件里已有
+// 同 threadId 的行时直接放弃——宁可不建（下一轮认领），绝不重复建任务。
 async function createThreadTask(plugin, node, { groupTitle, summary, points = [], threadId, state = 'running', promptCount = null }) {
-  const r = unwrap(await API.createChecklistTask(listKeyOf(node.filePath), groupTitle, { summary }));
+  const r = unwrap(await API.createChecklistTask(listKeyOf(node.filePath), groupTitle, {
+    summary,
+    dedupeMark: threadId ? `${T3_MARK}${threadId}` : ''
+  }));
   if (!r || !r.ok || !r.task) return null;
   const doc = await API.readListDoc(node.filePath);
   if (!doc) return null;
@@ -515,7 +522,21 @@ async function createThreadTask(plugin, node, { groupTitle, summary, points = []
 // 忽略与未设置一律跳过（未设置的仅弹窗提醒，关闭弹窗仍保持未设置，不回传）。
 // 数据来自 thread-hub 快照（由 startReverseSync 的订阅回调传入），
 // 不再自己 fork sqlite3——快照本来就有全量会话，这里只按 24h+syncSince 窗口过滤。
+// 并发防护：
+//   - single-flight：一轮 sync 含逐会话 LLM 总结可能超过轮询间隔，进行中再触发
+//     直接复用该轮，绝不两轮并行写同一份文件（历史上清单重复任务的根因之一）。
+//   - 与历史导入互斥（syncBusy）：导入扫全库 + 逐条建任务耗时长，期间 sync
+//     轮次直接跳过，避免两路共享过期快照重复建任务。
+const syncFlight = createSingleFlight();
+const syncBusy = createBusyFlag();
+
 export async function syncOnce(plugin, snapshotThreads = null) {
+  return syncFlight.run('sync', () => syncBusy.withBusy(() => syncOnceInner(plugin, snapshotThreads), {
+    onBusy: () => ({ created: 0, updated: 0, skipped: 'busy' })
+  }));
+}
+
+async function syncOnceInner(plugin, snapshotThreads = null) {
   const s = projectSettings(plugin);
   if (!s.reverseSync) return { created: 0, updated: 0 };
   const since = Math.max(Number(s.syncSince) || 0, Date.now() - 24 * 3600 * 1000);
@@ -540,6 +561,7 @@ export async function syncOnce(plugin, snapshotThreads = null) {
   const maxChars = Number(s.summaryMaxChars) || 200;
   const now = Date.now();
   let created = 0;
+  const createdSeen = new Set();
   let updated = 0;
 
   for (const t of threads) {
@@ -622,6 +644,9 @@ export async function syncOnce(plugin, snapshotThreads = null) {
     }
 
     if (now - t.createdAt < minAge) continue;
+    // 本轮内兜底：同一轮里同一 threadId 只建一次（createThreadTask 内还有文件现场重扫兜底）
+    if (createdSeen.has(t.threadId)) continue;
+    createdSeen.add(t.threadId);
 
     const cls = classifyWorkspace(t.cwd, idx.nodes, ignoredWorkspaces, journalWorkspaces);
     const target = unboundTarget(cls);
@@ -715,11 +740,27 @@ export async function ignoreThread(plugin, threadId) {
 
 // ---------- 历史会话导入与搬回 ----------
 
+// 导入互斥旗（与 syncOnce 共用 syncBusy，见其注释）：导入进行中 sync 轮次跳过；
+// 已有导入在跑时第二次导入调用直接返回，不排队——导入是手动一次性操作，连点无效。
+// importSeen 跨导入调用共享，进程级、只增不减：
+//   - 作用：导入循环开头那份委派 map 快照不含本轮刚写入的行，用它兜底防重复建。
+//   - 已知副作用：用户手动删掉某个已导入的会话行后，同一会话在本插件生命周期内
+//     不会被再次自动导入（快照去重会把它当「已见过」跳过）。重启插件可恢复。
+//     这是防重复的代价，属预期行为而非 bug。
+
+async function withImportLock(fn) {
+  return syncBusy.withBusy(fn, { onBusy: () => ({ imported: 0, skipped: 0, reason: 'busy' }) });
+}
+
 // 全量扫描 T3 库（不限 24 小时窗口），把属于该项目 cwd 的、尚未绑定在任何文件里的
 // 会话导入为「任务 + 委派子行」。返回 { imported, skipped }。
 // opts.llm 为真时逐会话调 LLM 总结（配置缺失或调用失败回落截断摘要）。
 export async function importThreadsToProject(plugin, node, opts = {}) {
   if (!node || !node.filePath) return { imported: 0, skipped: 0, reason: 'no_node' };
+  return withImportLock(() => importThreadsToProjectInner(plugin, node, opts));
+}
+
+async function importThreadsToProjectInner(plugin, node, opts = {}) {
   await ensureProjectFile(plugin, node);
   const s = projectSettings(plugin);
   const maxChars = Number(s.summaryMaxChars) || 200;
@@ -746,7 +787,9 @@ export async function importThreadsToProject(plugin, node, opts = {}) {
   for (const t of threads) {
     const c = normalizeCwd(t.cwd);
     if (!c || !(c === targetCwd || c.startsWith(targetCwd + '/')) || !belongsHere(c)) { skipped += 1; continue; }
-    if (map.get(t.threadId)) { skipped += 1; continue; }
+    // 三重去重：开头快照（map）/ 本插件生命周期内刚导入过的（importSeen）/ 文件现场
+    // 重扫（createThreadTask 内 withListDoc）。快照过期时靠后两道兜底。
+    if (map.get(t.threadId) || importSeen.has(t.threadId)) { skipped += 1; continue; }
     const ignoredList = new Set((plugin.settings && plugin.settings.projectIgnoredThreads) || []);
     if (ignoredList.has(t.threadId)) { skipped += 1; continue; }
     const meta = taskDateMeta(t);
@@ -766,6 +809,7 @@ export async function importThreadsToProject(plugin, node, opts = {}) {
       promptCount: sum ? sum.promptCount : null
     });
     if (!ins) { skipped += 1; continue; }
+    importSeen.add(t.threadId);
     imported += 1;
   }
   return { imported, skipped };
@@ -774,6 +818,12 @@ export async function importThreadsToProject(plugin, node, opts = {}) {
 // 把某个 cwd 的历史会话按「会话日期」写入对应日记（没有对应日记文件时由上游 API 创建）。
 // 与项目导入同口径：跳过已绑定、已忽略的会话；opts.llm 控制是否逐条 LLM 总结。
 export async function importThreadsToJournal(plugin, cwd, opts = {}) {
+  const targetCwd = normalizeCwd(cwd);
+  if (!targetCwd) return { imported: 0, skipped: 0, reason: 'no_cwd' };
+  return withImportLock(() => importThreadsToJournalInner(plugin, cwd, opts));
+}
+
+async function importThreadsToJournalInner(plugin, cwd, opts = {}) {
   const targetCwd = normalizeCwd(cwd);
   if (!targetCwd) return { imported: 0, skipped: 0, reason: 'no_cwd' };
   const s = projectSettings(plugin);
@@ -787,7 +837,7 @@ export async function importThreadsToJournal(plugin, cwd, opts = {}) {
   for (const t of threads) {
     const c = normalizeCwd(t.cwd);
     if (!c || !(c === targetCwd || c.startsWith(targetCwd + '/'))) continue;
-    if (map.get(t.threadId) || ignoredThreads.has(t.threadId)) { skipped += 1; continue; }
+    if (map.get(t.threadId) || ignoredThreads.has(t.threadId) || importSeen.has(t.threadId)) { skipped += 1; continue; }
     // 落到会话开始那天的日记；时间缺失时退回创建时间
     const day = todayKeyLocal(new Date(Number(t.firstMsgAt) || Number(t.createdAt) || Date.now()));
     const filePath = journalPathFor(plugin, day);
@@ -807,6 +857,7 @@ export async function importThreadsToJournal(plugin, cwd, opts = {}) {
       promptCount: sum ? sum.promptCount : null
     });
     if (!ins) { skipped += 1; continue; }
+    importSeen.add(t.threadId);
     imported += 1;
   }
   return { imported, skipped };
