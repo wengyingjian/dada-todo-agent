@@ -1,17 +1,17 @@
-# Dada Todo List
+# Dada 任务中心 (Dada Todo Agent)
 
-> A task & checklist manager for Obsidian, built entirely on plain Markdown checkboxes. Your tasks live in your own notes — daily notes, an inbox note, and checklist files. No account, no cloud, no lock-in.
+> A task hub for Obsidian built on plain Markdown checkboxes — manage your own tasks, **delegate work to [T3 Code](https://github.com/t3code-ai/t3-code) agents, and let session progress sync back into your notes**. No account, no cloud, no lock-in.
 
 [简体中文](./README_zh.md) · English
 
 ---
 
-**Dada Todo List** turns your Obsidian vault into a full-featured task and checklist manager — powered entirely by plain Markdown checkboxes (`- [ ]` / `- [x]`). No accounts, no cloud services, no proprietary database: your tasks are simply lines in your own notes, and the plugin brings them together with calendar, timeline and agenda views plus a polished editing experience.
+**Dada Todo Agent** started as a fork of [Dada Todo List](https://github.com/wengyingjian/dada-todo-agent) and has grown into a full task center: everything from the original task manager (seven views, inline syntax, drag-to-reschedule …) plus a deep integration with **T3 Code** — delegate any checklist item to an AI agent, watch its session state sync back onto the task line, chat with running sessions from a sidebar, and import historical sessions into your notes.
 
 ### Who is it for?
 
-- **Already managing tasks in Obsidian?** If your to-dos are scattered across daily notes and scattered checklists — and finding them means searching — this plugin is for you. It gathers everything you've already written into seven views (day / week / month / agenda / quadrants / checklists / list) with zero migration: your notes stay exactly where they are.
-- **Haven't tried task management in Obsidian yet?** You don't need yet another to-do service. Your vault *is* your task manager: plain Markdown that stays readable forever, stored locally, synced with whatever you already use. Start with a single `- [ ]` and grow your own system from there.
+- **You use Obsidian for tasks and T3 Code for agent work** — this plugin is the bridge: your checklist is the control room, agent sessions become checkable task lines with live status, and everything stays plain Markdown.
+- **You just want a great task manager** — the T3 integration is entirely optional. Without it configured, this is a polished, self-contained task & checklist manager powered by plain Markdown checkboxes.
 
 ### Quick start
 
@@ -19,24 +19,35 @@
 2. Click the ✅ icon in the left ribbon (or run the command "Open Dada Todo List") to open the panel;
 3. Write a line `- [ ] Buy milk #life` in any daily note — it shows up in the panel instantly.
 
-### Highlights
+### Highlights — task manager
 
 - **Seven views** — day timeline, seven-day week timeline with lane layout, month calendar (with Chinese lunar dates, solar terms, festivals and statutory holidays), rolling agenda, a 2×2 priority quadrants matrix, grouped checklists, and a filterable list of everything
 - **Inline syntax** — write `#tags` and `[links](url)` right in the task title; they render as clickable pills and hyperlinks
 - **Flexible time** — single time, time ranges (start – end), all-day, or **cross-date** (start date – end date, shown across multiple days), switchable per task
 - **Subtasks** — indented lines become nested subtasks of any depth
-- **Task priority** — mark tasks high / medium / low (🔺 / 🔼 / 🔽); the format is read & write compatible with the obsidian-tasks plugin, set right in the task editor
-- **Tag colors** — assign a color to any tag in settings: task blocks, agenda cards and tag pills all pick it up; click the color dot in the list sidebar to change it anytime
-- **Drag to reschedule** — drag tasks between days, or drag the handles on the timeline to fine-tune start / end times
-- **Option/Alt + drag to copy** — hold Option (Mac) / Alt or Ctrl (Windows·Linux) while dragging to drop a copy at the target; the original stays put. In the month view the copy keeps its original times and only changes the date; on the week / day timeline the drop point becomes the new start time (original duration preserved)
-- **Customizable view menu** — choose which views appear in the switcher menu and drag to reorder them; hidden views keep their order and can be restored anytime
-- **Due-time reminders** — get a system notification or an in-app notice when a task comes due, with a short "da-da" chime; all-day tasks can share one fixed reminder time (e.g. 10:00). ⚠️ Desktop only: there is no background push, so nothing fires while Obsidian is closed or in the background
-- **Smart extras** — overdue postponement in one click (diary tasks move into today's daily note), `Ctrl/⌘+click` to jump to the source note
+- **Task priority** — high / medium / low (🔺 / 🔼 / 🔽), read & write compatible with the obsidian-tasks plugin
+- **Tag colors** — assign a color to any tag in settings: task blocks, agenda cards and tag pills all pick it up
+- **Drag to reschedule** — drag tasks between days, or drag timeline handles to fine-tune start / end times
+- **Option/Alt + drag to copy** — hold Option (Mac) / Alt or Ctrl (Windows·Linux) while dragging to drop a copy at the target
+- **Due-time reminders** — system notification or in-app notice with a short chime; ⚠️ Desktop only
+- **Auto archive** — completed blocks can be auto-moved to an archive checklist after a configurable idle period, with 24h protection for fresh tasks
+
+### 🤖 Highlights — T3 Code agent hub
+
+All of the below is optional; it activates when a T3 Code installation is available.
+
+- **One-click delegation** — press the ✈ button on any task (editor, checklist view, or the task modal) to delegate it to a T3 Code agent. A sub-line appears under the task showing what was delegated, then live state: running → awaiting → completed / failed
+- **Projects = checklist files** — a project is a checklist file with a `cwd` in its frontmatter. T3 sessions started in that directory sync into the project's checklist automatically, grouped by state (### In progress / ### Pending / ### Completed)
+- **Reverse sync** — the plugin watches T3 Code's SQLite database and syncs session state back onto task lines: status checkboxes update in place, finished sessions get a one-line summary, and new (unbound) sessions are written into the owning project's file or your daily note. Silent-period + prompt-count thresholds keep re-summarization cheap
+- **LLM session summaries** — configure an OpenAI-compatible endpoint and completed delegations are rewritten as a short title + numbered takeaway points; without it, a truncated transcript excerpt is used
+- **Sessions sidebar** — a dedicated right sidebar (search, today's collaboration stats, per-project activity timeline) listing every T3 session: pending / running / completed, click to filter. Refreshes near-instantly via SQLite WAL watching
+- **Conversation modal** — open any session from the sidebar or a task line: read messages, send replies (⏎ to send), and answer agent questions (option picker + custom input) right from Obsidian. Full-access sessions are supported via the built-in OAuth flow
+- **Checklist management extras** — create checklists from the UI (name + optional cwd, with a system folder picker), archive a checklist via right-click, and move tasks between checklists while keeping their dates
 
 ### Installation
 
 **Manual**: download `main.js`, `styles.css` and `manifest.json` into
-`your-vault/.obsidian/plugins/dada-todo-list/`, then enable the plugin in Settings → Community plugins.
+`your-vault/.obsidian/plugins/dada-todo-agent/`, then enable the plugin in Settings → Community plugins.
 
 **BRAT**: install [BRAT](https://github.com/TfTHacker/obsidian42-brat) and add this repository.
 
@@ -44,15 +55,16 @@
 
 | Data | Location |
 |---|---|
-| Dated tasks | Your **core Daily notes** folder (follows its folder & date format) — tasks are checkboxes inside each daily note |
+| Dated tasks | Your **core Daily notes** folder — tasks are checkboxes inside each daily note |
 | Dateless tasks (inbox) | `DadaTodoList.md` in the vault root by default; configurable, created automatically |
-| Checklists | Any note whose frontmatter `tags` include `todoList` (configurable), anywhere in the vault |
+| Checklists & projects | Any note whose frontmatter `tags` include `todoList` (configurable); projects additionally carry a `cwd` field |
+| Plugin settings | `data.json` in the plugin folder (including the optional T3 OAuth token) |
 
-Everything is plain Markdown. Uninstalling the plugin changes nothing — your notes stay as they are.
+Everything is plain Markdown. Uninstalling the plugin changes nothing — your notes stay as they are. T3 Code's own data (sessions, threads) lives in T3 Code's storage; the plugin only ever **reads** that database and writes into your notes.
 
 ### Writing checklists
 
-Any note whose frontmatter `tags` include the checklist tag (default `todoList`) becomes a checklist. Use **`###` third-level headings as group separators** — the checklist view renders one group per heading:
+Any note whose frontmatter `tags` include the checklist tag (default `todoList`) becomes a checklist. Use **`###` third-level headings as group separators**:
 
 ```markdown
 ---
@@ -63,7 +75,7 @@ tags:
 ### Work
 - [ ] Finish the quarterly report #work
     - [ ] Collect data
-- [x] Reply to client emails
+- [x] Reply to client emails  ⚡ t3:abc123#2
 
 ### Life
 - [ ] Book a dentist appointment
@@ -71,62 +83,39 @@ tags:
 
 - **`###` heading = group name**, freely added/renamed/removed; tasks before any heading fall into "Ungrouped"
 - **Indented checkboxes are subtasks**, nesting to any depth
-- Switch between **list / columns** layouts; **drag a task onto another group** to move it
-- Each group has a **+ button** to add tasks; the sidebar shows live total / done progress per checklist
-- The eye toggle ("hide done") also folds checklists that have **no pending tasks** into a hint line at the bottom of the sidebar ("N hidden · Show all"); empty checklists are never folded so they can take their first task
-- The **+ button** at the right of the "Checklist" list header opens the same editor shell as "New task": enter a name and an optional **cwd** (with a system folder picker) — the file is saved to the `清单` folder at the vault root by default (configurable via the "Checklist folder" setting)
-- **Right-click a checklist → Archive checklist** adds the `archived` tag to its frontmatter `tags`; archived checklists disappear from the checklist and list views (remove the tag to restore)
-- The task editor shows the task's **current checklist / group** as a chip beside the title; clicking it drops down a small picker (checklist + group) right inside the editor — hit **Move** to relocate the task immediately with its dates kept, no extra dialog and no extra form height; new tasks can pick where to be saved the same way
-
-### Data access disclosure
-
-- **File enumeration**: the plugin lists Markdown file paths and their frontmatter to discover daily notes and checklist files (checklists are identified anywhere in the vault by their tags). Only matched daily notes (within the configured load window), the inbox file, and tag-matched checklist files are actually read — no other file's content is ever touched.
-- **localStorage**: stores only non-essential UI preferences (current view, filters, onboarding state) on the local device. It never contains note content and is never synced; it is deliberately *not* written to `data.json` to avoid triggering cloud-sync services on every interaction.
+- **The `⚡ t3:<id>` mark at line end** binds that line to a T3 Code session — the plugin maintains it automatically when delegating or reverse-syncing; don't edit it by hand
+- Drag tasks between groups, add per-group with the + button, archive a checklist via right-click (adds the `archived` tag)
 
 ### Settings
 
 | Option | Description |
 |---|---|
 | Open location | Left sidebar / main workspace tab / right sidebar |
-| Theme color scheme | Color scheme for task blocks in the timeline, calendar and other views: Default / Morandi / Jelly / Spring / Summer greens / Autumn / Winter; color derived from the task title |
-| Show lunar calendar & holidays | Lunar dates, solar terms and holiday badges in day / week / month views; turn off for Gregorian only |
-| Journal folder | Folder holding your journals (dated tasks); the plugin scans it and subfolders for notes whose filename contains a date; default `/` means the vault root |
-| Journal load window | Load only the last N days of journals (30 / 90 / 180 / 365 / all; default all) — lower it on large vaults for better performance |
-| Inbox file | Where dateless tasks are stored (path relative to vault root); changing it offers to migrate existing tasks |
-| Checklist folder | Folder where newly created checklist files are stored (relative to vault root); default `清单`, empty means vault root. Affects new files only — existing checklists are still detected by tag anywhere in the vault |
-| Checklist file tag(s) | Notes whose frontmatter `tags` include any of these become checklist files; multiple allowed |
-| Week starts on | First column of the week view and month calendar; Sunday through Saturday, default Monday |
-| Timeline display range | Start and end hours of the timeline view (0:00 – 24:00) to focus on the hours you use |
-| View menu | Choose which views show in the switcher menu; drag rows to reorder — all views shown in default order by default |
-| Add completion date marker when completing a task | Appends the completion date to the end of the task line when you check it off (e.g. ✅ 2026-10-06). On by default; turn off to skip the marker while keeping start / due date tags |
-| Notify when tasks are due | Remind you with a notification plus a short sound when a task comes due. Off by default. ⚠️ Desktop only, no background push |
-| Remind all-day tasks | All-day tasks have no time of day; turn on to remind them at the time below. Off by default |
-| All-day reminder time | Every all-day task of the day is reminded at this time, e.g. 10:00 |
-| Notification channel | System notification (desktop popup) or in-app notice; falls back to in-app when system permission is missing |
+| Theme color scheme | 7 schemes for task blocks; color derived from the task title |
+| Show lunar calendar & holidays | Lunar dates, solar terms and holiday badges; turn off for Gregorian only |
+| Journal folder / load window | Where dated tasks live; limit how many days are loaded for large vaults |
+| Inbox file | Where dateless tasks are stored |
+| Checklist folder / checklist tag(s) | Where new checklists are created; which notes count as checklists |
+| Week starts on / Timeline range / View menu | Display preferences for views |
+| Completion date marker | Append ✅ date when checking off |
+| Due-time reminders | Notification channel, all-day reminder time |
+| **T3 binary path** | Where the `t3` CLI lives (auto-detected if empty) |
+| **T3 provider / model** | Model override for delegated sessions |
+| **Project default cwd** | Prefill for the delegation dialog |
+| **Reverse sync** | Sync T3 session state back into your notes (on by default) |
+| **Reverse sync min minutes** | A session must be at least this old before it's written into a file (default 3) |
+| **Summary LLM** | OpenAI-compatible base URL / model / API key for session summaries; empty = truncated excerpt |
+| **Summary prompt template** | Custom system prompt for the summarizer (`{{delegation}}` / `{{transcript}}` placeholders) |
+| **Summary silent minutes** | A finished session must be silent this long before re-summarizing (default 30) |
 
 ### Interface
 
-- **Bilingual** — follows Obsidian's interface language (English / 简体中文)
-- **Lunar calendar** — lunar dates, solar terms and festivals in month / week view headers, available in English too
+- **Trilingual** — follows Obsidian's interface language (English / 简体中文 / 繁體中文)
 - **Theme aware** — all colors use Obsidian's native variables, adapting to light / dark and custom accents
 
 ### Language
 
-The interface follows Obsidian's language setting (English / 简体中文). Restart Obsidian after switching.
-
----
-
-## 💖 Support the author
-
-If this plugin helps you, feel free to buy me a coffee — it keeps me motivated to keep improving it~ You can also find me on [Xiaohongshu](https://xhslink.cn/o/2G9OTVU76WP) for tips and updates.
-
-WeChat Pay
-
-<img src="docs/donate-wechat.jpg" alt="WeChat donation QR" width="300">
-
-Alipay
-
-<img src="docs/donate-alipay.jpg" alt="Alipay donation QR" width="300">
+The interface follows Obsidian's language setting (English / 简体中文 / 繁體中文). Restart Obsidian after switching.
 
 ---
 
@@ -134,15 +123,19 @@ Alipay
 
 ```bash
 npm install
-npm run build     # production build (outputs: dada-todo-list/main.js, styles.css, manifest.json)
+npm run build     # production build (outputs: dada-todo-agent/main.js, styles.css, manifest.json)
 npm run dev       # dev mode: rebuild automatically on src/ changes
+node --test src/project/reverse-sync.test.mjs   # run a unit test file (node:test)
+node scripts/install.mjs                        # build + copy into your dev vault's plugin folder
 ```
 
-Local debugging: symlink your test vault's plugin folder to the build output (folder name must match the plugin id):
+Local debugging: symlink your test vault's plugin folder to the build output (folder name must match the plugin id `dada-todo-agent`):
 
 ```bash
-ln -s "$(pwd)/dada-todo-list" "your-vault/.obsidian/plugins/dada-todo-list"
+ln -s "$(pwd)/dada-todo-agent" "your-vault/.obsidian/plugins/dada-todo-agent"
 ```
+
+> After any code change, run `node scripts/install.mjs` (a plain `npm run build` does not update the copy in your vault), then reload the plugin in Obsidian.
 
 ## 📄 License
 
