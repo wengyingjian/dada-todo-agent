@@ -10,6 +10,7 @@ import { buildTranscript, buildSummaryPrompt, countUserPrompts } from './summari
 import { callSummaryLlm } from './summarize-llm-io.js';
 import { fetchThreadMessages } from './summarize-io.js';
 import { t3DbPath } from './t3-paths.js';
+import { ensureT3Project } from './t3-project-ensure.js';
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
@@ -149,6 +150,10 @@ export async function startDelegation(plugin, rt, opts) {
       }
     } catch { /* ignore */ }
   }, 1500);
+
+  // cwd 未注册为 T3 项目时先注册（t3 thread start 只接受已注册项目或项目内路径），
+  // 否则 CLI 报 "No T3 Code project matches"。注册失败不阻断——CLI 侧自有报错可见。
+  try { await ensureT3Project(t3DbPath(), binary, cwd); } catch { /* ignore */ }
 
   const result = await runT3({
     binary,
